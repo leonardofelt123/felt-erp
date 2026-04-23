@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Felt ERP — Gestão Executiva</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230ea5e9'/><text x='50' y='68' font-size='50' font-weight='900' text-anchor='middle' fill='white' font-family='sans-serif'>FE</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: #060b14; font-family: 'Outfit', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    input, select, textarea, button { font-family: inherit; }
+    input:focus, select:focus { border-color: #c9a84c !important; box-shadow: 0 0 0 3px rgba(201,168,76,0.12) !important; }
+    button { cursor: pointer; }
+    button:active { transform: scale(0.97); }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1a2540; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2a3d65; }
+    ::selection { background: rgba(201,168,76,0.25); color: #fff; }
+    @keyframes spin { to { transform: rotate(360deg) } }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+    @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+    @keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
+    #root { min-height: 100vh; }
+    tr { transition: background 0.15s ease; }
+    @media(max-width:768px){
+      .erp-side{display:none!important}
+      .erp-mob-top{display:flex!important}
+      .erp-mob-menu{display:block!important}
+      .erp-main{padding:16px!important;padding-top:70px!important;padding-bottom:20px!important}
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./app.jsx"></script>
+</body>
+</html>
