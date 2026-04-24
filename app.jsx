@@ -885,28 +885,35 @@ function ClientPortal({ token, data }) {
             </div>
             <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px"}}>
               <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Documentos Técnicos</p>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
-                {[
-                  {icon:"📋",titulo:"ART Registrada",sub:"Anotação de Responsabilidade Técnica"},
-                  {icon:"📐",titulo:"Projeto Aprovado",sub:"Plantas e memoriais"},
-                  {icon:"📹",titulo:"Tour 360°",sub:"Visita virtual da obra"},
-                  {icon:"📊",titulo:"RDO",sub:"Relatório Diário de Obra"}
-                ].map((d,i)=>(
-                  <div key={i} style={{
-                    background:C.bg,
-                    borderRadius:12,
-                    border:`1px solid ${C.border}`,
-                    padding:"18px",
-                    cursor:"pointer",
-                    transition:"all 0.2s"
-                  }} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold+"66";e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="translateY(0)";}}>
-                    <div style={{fontSize:28,marginBottom:10}}>{d.icon}</div>
-                    <p style={{fontSize:13,fontWeight:700,marginBottom:4}}>{d.titulo}</p>
-                    <p style={{fontSize:11,color:C.textDim}}>{d.sub}</p>
-                    <p style={{fontSize:10,color:C.textDim,marginTop:10,fontStyle:"italic"}}>Em breve disponível</p>
+              {(() => {
+                const docs = Object.values(data.documentos || {}).filter(d => d.cliente === clienteNome);
+                return docs.length > 0 ? (
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
+                    {docs.map(d=>(
+                      <a key={d.id} href={d.url} target="_blank" rel="noopener noreferrer" style={{
+                        background:C.bg,
+                        borderRadius:12,
+                        border:`1px solid ${C.border}`,
+                        padding:"18px",
+                        cursor:"pointer",
+                        transition:"all 0.2s",
+                        textDecoration:"none",
+                        color:"inherit",
+                        display:"block"
+                      }} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold+"66";e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="translateY(0)";}}>
+                        <div style={{fontSize:28,marginBottom:10}}>{
+                          d.tipo==="ART"?"📋":d.tipo==="RDO"?"📊":d.tipo==="FOTOS"?"📸":d.tipo==="PROJETO"?"📐":d.tipo==="360"?"📹":"📄"
+                        }</div>
+                        <p style={{fontSize:13,fontWeight:700,marginBottom:4}}>{d.titulo}</p>
+                        <p style={{fontSize:11,color:C.textDim}}>{d.descricao || d.tipo}</p>
+                        <p style={{fontSize:10,color:C.gold,marginTop:10,fontWeight:600}}>📎 Abrir documento →</p>
+                      </a>
+                    ))}
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <p style={{color:C.textDim,fontSize:13,padding:"20px 0",textAlign:"center"}}>Documentos serão compartilhados conforme a obra avança</p>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -1086,13 +1093,47 @@ function App() {
   const diaristas = staffList.filter(s => s.tipo === "diarista");
   const obrasAtivas = obras.filter(o => o.status === "Em andamento");
 
-  // ── CORREÇÃO: Rateio igual entre obras em andamento ──
-  // Cada mês gera um custo de salários totais, dividido igualmente pelas obras ativas.
+  // ── RATEIO MENSALISTAS — BASEADO EM LANÇAMENTOS MANUAIS ──
+  // Cada pagamento de mensalista (tipo "funcionario") é rateado igualmente
+  // entre as obras EM ANDAMENTO que já tinham atividade no mês do lançamento.
+  // Isso evita que uma obra iniciada em abril receba rateio de janeiro.
   const totalSalariosMensal = mensalistas.reduce((s,m)=>s+(m.salario||0),0);
+  const lancsFuncionario = lancs.filter(l => l.tipo === "funcionario");
+
+  // Detectar em quais meses cada obra teve atividade (lançamentos diretos ou diárias)
+  const obraAtividadeMeses = {};
+  obras.forEach(o => {
+    const mesesObra = new Set();
+    // lançamentos diretos da obra
+    lancs.filter(l => l.obraId === o.id && l.tipo === "obra").forEach(l => {
+      if (l.data) mesesObra.add(l.data.slice(0,7));
+    });
+    // diárias na obra
+    diariasList.filter(d => d.obraId === o.id).forEach(d => {
+      if (d.data) mesesObra.add(d.data.slice(0,7));
+    });
+    obraAtividadeMeses[o.id] = mesesObra;
+  });
+
+  // Para cada lançamento de funcionário, identificar obras ativas naquele mês
+  // e calcular quanto cada obra recebe de rateio
+  const rateioMensalistaObra = {};
+  obras.forEach(o => { rateioMensalistaObra[o.id] = 0; });
+
+  lancsFuncionario.forEach(l => {
+    const mesLanc = l.data?.slice(0,7);
+    if (!mesLanc) return;
+    // Obras em andamento que tinham atividade naquele mês
+    const obrasDoMes = obrasAtivas.filter(o => obraAtividadeMeses[o.id]?.has(mesLanc));
+    // Se nenhuma obra ativa no mês, distribuir entre todas ativas (fallback)
+    const alvos = obrasDoMes.length > 0 ? obrasDoMes : obrasAtivas;
+    if (alvos.length === 0) return;
+    const parcela = (l.valor || 0) / alvos.length;
+    alvos.forEach(o => { rateioMensalistaObra[o.id] = (rateioMensalistaObra[o.id]||0) + parcela; });
+  });
+
   const rateioPorObra = obrasAtivas.length > 0 ? totalSalariosMensal / obrasAtivas.length : 0;
 
-  // Quantos meses de atividade temos? Considera meses onde houve QUALQUER lançamento 2026
-  // (mais robusto que depender só de diárias)
   const mesesAtividade2026 = [...new Set(
     lancs
       .filter(l => l.data && l.data.startsWith("2026"))
@@ -1110,17 +1151,27 @@ function App() {
     return total;
   };
 
-  // Rateio mensalista: só se a obra está em andamento. Custo = rateio mensal × nº de meses
-  const mensalistaCustoObra = oid => {
-    const obra = obras.find(o => o.id === oid);
-    if (!obra || obra.status !== "Em andamento") return 0;
-    return rateioPorObra * numMeses;
-  };
+  // Rateio mensalista por obra: agora vem do cálculo real acima (não mais automático genérico)
+  const mensalistaCustoObra = oid => rateioMensalistaObra[oid] || 0;
 
-  // Custos operacionais por obra (alimentação equipe, combustível, etc quando alocados)
-  const custosOpObra = oid => lancs
+  // ── RATEIO OPERACIONAL SEM OBRA — igual mensalistas ──
+  // Lançamentos operacionais COM obraId vão direto pra obra.
+  // SEM obraId são rateados igualmente entre obras ativas.
+  const custoOpDireto = oid => lancs
     .filter(l => l.obraId === oid && l.tipo === "operacional")
     .reduce((s,l)=>s+(l.valor||0),0);
+
+  const custoOpSemObra = lancs
+    .filter(l => l.tipo === "operacional" && !l.obraId)
+    .reduce((s,l)=>s+(l.valor||0),0);
+  const rateioOpPorObra = obrasAtivas.length > 0 ? custoOpSemObra / obrasAtivas.length : 0;
+
+  const custosOpObra = oid => {
+    const obra = obras.find(o => o.id === oid);
+    const direto = custoOpDireto(oid);
+    const rateio = (obra && obra.status === "Em andamento") ? rateioOpPorObra : 0;
+    return direto + rateio;
+  };
 
   // Custo total por obra: lançamentos diretos + diárias + rateio mensalistas + operacional
   const custoObra = oid => (
@@ -1159,11 +1210,12 @@ function App() {
     const m = o.contrato > 0 ? lb/o.contrato : 0;
     const ml = o.contrato > 0 ? ll/o.contrato : 0;
     const roi = custo > 0 ? ((o.contrato||0) - custo) / custo : 0;
-    const ex = o.contrato > 0 ? custo/o.contrato : 0;
+    const exFinanceira = o.contrato > 0 ? custo/o.contrato : 0;
+    const ex = (o.execucaoManual || 0) / 100; // % físico manual (0-100 armazenado, 0-1 exibido)
     const semDadosReais = custoDireto === 0 && diariasCustoObra(o.id) === 0;
     return {
       ...o, custo, custoDireto, imposto:imp, rtVal:rtV, recLiq,
-      lucroBruto:lb, lucroLiq:ll, margem:m, margemLiq:ml, roi, execucao:ex,
+      lucroBruto:lb, lucroLiq:ll, margem:m, margemLiq:ml, roi, execucao:ex, exFinanceira,
       semDadosReais,
       color: palette[idx % palette.length]
     };
@@ -1304,6 +1356,21 @@ function App() {
     showToast("Aditivo enviado ao cliente");
   };
 
+  // Documentos (links externos para portal do cliente)
+  const fbAddDoc = d => {
+    const id = uid();
+    set(ref(fdb,`documentos/${id}`), {...d,id});
+    fbLog("Documento adicionado", d.titulo + " — " + d.cliente);
+    showToast("Documento publicado no portal");
+  };
+  const fbDelDoc = docId => {
+    const key = Object.keys(data.documentos||{}).find(k => data.documentos[k].id === docId || k === docId);
+    if (!key) return;
+    remove(ref(fdb,`documentos/${key}`));
+    fbLog("Documento removido", docId);
+    showToast("Documento removido");
+  };
+
   // Equipe
   const fbAddStaff = s => { const id = uid(); set(ref(fdb,`equipe/${id}`),{...s,id,ativo:true}); fbLog("Funcionário cadastrado",s.nome); showToast("Funcionário cadastrado"); };
   const fbEditStaff = (staffId,u) => {
@@ -1419,12 +1486,12 @@ function App() {
     const [f,setF] = useState(initial || {
       descricao: "", valor: "",
       data: new Date().toISOString().slice(0,10),
-      centroCusto: tipo==="obra"?"MATERIAL":tipo==="funcionario"?"TIAGO":"CONTABILIDADE",
+      centroCusto: tipo==="obra"?"MATERIAL":tipo==="funcionario"?"TIAGO":tipo==="operacional"?"COMBUSTÍVEL":"CONTABILIDADE",
       obs: "",
-      obraId: selObra || (obras[0]?.id ?? ""),
+      obraId: tipo==="obra" ? (selObra || (obras[0]?.id ?? "")) : "",
       tipo
     });
-    const cc = tipo==="obra" ? allCC : tipo==="funcionario" ? CC_FUNC : CC_ADM;
+    const cc = tipo==="obra" ? allCC : tipo==="funcionario" ? CC_FUNC : tipo==="operacional" ? CC_OPER : CC_ADM;
     const doSave = () => {
       if (!f.descricao || !f.valor) return;
       const d = { ...f, valor: parseFloat(f.valor) };
@@ -1438,6 +1505,14 @@ function App() {
           <Field label="Obra">
             <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
               {obras.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+            </select>
+          </Field>
+        )}
+        {tipo==="operacional" && (
+          <Field label="Obra (opcional)" hint="Deixe vazio para ratear entre todas as obras em andamento">
+            <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
+              <option value="">🔄 Ratear entre todas as obras</option>
+              {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
             </select>
           </Field>
         )}
@@ -1478,8 +1553,9 @@ function App() {
       contrato: initial.contrato,
       aliquota: (initial.aliquota||0) * 100,
       rt: (initial.rt||0) * 100,
-      status: initial.status
-    } : { nome:"", contrato:"", aliquota:0, rt:0, status:"Em andamento" });
+      status: initial.status,
+      execucaoManual: initial.execucaoManual || 0
+    } : { nome:"", contrato:"", aliquota:0, rt:0, status:"Em andamento", execucaoManual:0 });
     const doSave = () => {
       if (!f.nome || !f.contrato) return;
       const d = {
@@ -1487,7 +1563,8 @@ function App() {
         contrato: parseFloat(f.contrato),
         aliquota: (parseFloat(f.aliquota)||0)/100,
         rt: (parseFloat(f.rt)||0)/100,
-        status: f.status
+        status: f.status,
+        execucaoManual: parseFloat(f.execucaoManual) || 0
       };
       if (initial) fbEditObra(initial.id, d);
       else fbAddObra(d);
@@ -1516,6 +1593,12 @@ function App() {
             <input type="number" step="0.01" value={f.rt} onChange={e=>setF(p=>({...p,rt:e.target.value}))} style={inputStyle}/>
           </Field>
         </div>
+        <Field label={`Execução Física (${f.execucaoManual}%)`} hint="Progresso real da obra — arraste o slider ou digite o valor">
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <input type="range" min="0" max="100" step="1" value={f.execucaoManual} onChange={e=>setF(p=>({...p,execucaoManual:e.target.value}))} style={{flex:1,accentColor:C.gold}}/>
+            <input type="number" min="0" max="100" value={f.execucaoManual} onChange={e=>setF(p=>({...p,execucaoManual:e.target.value}))} style={{...inputStyle,width:70,textAlign:"center",padding:"8px"}}/>
+          </div>
+        </Field>
         <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>{initial?"Salvar":"Criar Obra"}</button>
       </Modal>
     );
@@ -1620,14 +1703,19 @@ function App() {
       fbAddAditivo({ ...f, valor: parseFloat(f.valor) });
       onClose();
     };
-    // Só clientes com portal
-    const clientesComPortal = clientes.filter(c => c.portalToken);
+    // Clientes com portal: do Firebase (portalToken) OU do mapa PORTAL_TOKENS
+    const portalNomes = new Set(Object.values(PORTAL_TOKENS));
+    const clientesComPortal = clientes.filter(c => c.portalToken || portalNomes.has(c.nome));
+    // Se nenhum cliente tem portalToken no Firebase, usar direto do PORTAL_TOKENS
+    const listaFinal = clientesComPortal.length > 0
+      ? clientesComPortal
+      : Object.values(PORTAL_TOKENS).map((nome,i) => ({id:`pt${i}`,nome}));
     return (
       <Modal title="Propor Aditivo ao Cliente" onClose={onClose}>
         <Field label="Cliente" hint="Apenas clientes com portal ativo">
           <select value={f.cliente} onChange={e=>setF(p=>({...p,cliente:e.target.value}))} style={selectStyle}>
             <option value="">Selecione...</option>
-            {clientesComPortal.map(c=><option key={c.id} value={c.nome}>{c.nome}</option>)}
+            {listaFinal.map(c=><option key={c.id} value={c.nome}>{c.nome}</option>)}
           </select>
         </Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
@@ -1642,6 +1730,49 @@ function App() {
           <textarea rows={3} value={f.descricao} onChange={e=>setF(p=>({...p,descricao:e.target.value}))} style={{...inputStyle,resize:"vertical"}} placeholder="Ex: Inclusão de piso em porcelanato no quarto de hóspedes..."/>
         </Field>
         <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>Enviar ao Cliente</button>
+      </Modal>
+    );
+  };
+
+  const DocForm = ({onClose}) => {
+    const [f,setF] = useState({
+      cliente: "", tipo: "RDO", titulo: "", url: "", descricao: ""
+    });
+    const portalNomes = new Set(Object.values(PORTAL_TOKENS));
+    const clientesComPortal2 = clientes.filter(c => c.portalToken || portalNomes.has(c.nome));
+    const listaDoc = clientesComPortal2.length > 0
+      ? clientesComPortal2
+      : Object.values(PORTAL_TOKENS).map((nome,i) => ({id:`pt${i}`,nome}));
+    const doSave = () => {
+      if (!f.cliente || !f.url || !f.titulo) return;
+      fbAddDoc(f);
+      onClose();
+    };
+    return (
+      <Modal title="Publicar Documento no Portal" onClose={onClose}>
+        <Field label="Cliente">
+          <select value={f.cliente} onChange={e=>setF(p=>({...p,cliente:e.target.value}))} style={selectStyle}>
+            <option value="">Selecione...</option>
+            {listaDoc.map(c=><option key={c.id} value={c.nome}>{c.nome}</option>)}
+          </select>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <Field label="Tipo">
+            <select value={f.tipo} onChange={e=>setF(p=>({...p,tipo:e.target.value}))} style={selectStyle}>
+              {["ART","RDO","FOTOS","PROJETO","360","CONTRATO","MEMORIAL","OUTRO"].map(t=><option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Título">
+            <input value={f.titulo} onChange={e=>setF(p=>({...p,titulo:e.target.value}))} style={inputStyle} placeholder="Ex: ART Registrada - CREA 12345"/>
+          </Field>
+        </div>
+        <Field label="Link externo (Google Drive, Dropbox, etc.)" hint="Cole aqui o link de compartilhamento do arquivo">
+          <input value={f.url} onChange={e=>setF(p=>({...p,url:e.target.value}))} style={inputStyle} placeholder="https://drive.google.com/file/d/..."/>
+        </Field>
+        <Field label="Descrição (opcional)">
+          <input value={f.descricao} onChange={e=>setF(p=>({...p,descricao:e.target.value}))} style={inputStyle} placeholder="Ex: Relatório Diário de Obra - Semana 12"/>
+        </Field>
+        <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>Publicar no Portal</button>
       </Modal>
     );
   };
@@ -1839,8 +1970,15 @@ function App() {
               {mensalistaCustoObra(o.id) > 0 && (
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.purple}44`}}>
                   <div style={{width:8,height:8,borderRadius:4,background:C.purple}}/>
-                  <span style={{fontSize:11,color:C.purple}}>RATEIO MENSALISTAS ({numMeses}m)</span>
+                  <span style={{fontSize:11,color:C.purple}}>RATEIO MENSALISTAS</span>
                   <span style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{R$(mensalistaCustoObra(o.id))}</span>
+                </div>
+              )}
+              {rateioOpPorObra > 0 && o.status === "Em andamento" && (
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.amber}44`}}>
+                  <div style={{width:8,height:8,borderRadius:4,background:C.amber}}/>
+                  <span style={{fontSize:11,color:C.amber}}>RATEIO OPERACIONAL</span>
+                  <span style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{R$(rateioOpPorObra)}</span>
                 </div>
               )}
             </div>
@@ -1947,8 +2085,12 @@ function App() {
         const dias = diariasList.filter(d=>d.equipeId===st.id && d.obraId===o.id && d.data?.startsWith(eqFiltroMes)).length;
         return s + dias * (st.valorDiaria||0);
       }, 0);
-      // rateio mensalista do mês
-      const rateio = rateioPorObra;
+      // rateio mensalista do mês: lançamentos de funcionários daquele mês, rateados pelas obras ativas com atividade
+      const lancsDoMes = lancsFuncionario.filter(l => l.data?.startsWith(eqFiltroMes));
+      const totalMesFunc = lancsDoMes.reduce((s,l)=>s+(l.valor||0),0);
+      const obrasComAtivNoMes = obrasAtivas.filter(ob => obraAtividadeMeses[ob.id]?.has(eqFiltroMes));
+      const alvos = obrasComAtivNoMes.length > 0 ? obrasComAtivNoMes : obrasAtivas;
+      const rateio = alvos.find(ob => ob.id === o.id) ? totalMesFunc / alvos.length : 0;
       return { ...o, custoDiaristas, rateio, totalMes: custoDiaristas + rateio };
     });
 
@@ -1968,9 +2110,9 @@ function App() {
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:20}}>
           <MetricCard small label="Folha Mensalistas" value={R$(totalSalariosMensal)} color={C.accent} sub={`${mensalistas.length} funcionários`}/>
-          <MetricCard small label="Rateio / Obra" value={R$(rateioPorObra)} color={C.purple} sub={`÷ ${obrasAtivas.length} obras ativas`}/>
+          <MetricCard small label="Lanç. Func. (total)" value={R$(lancsFuncionario.reduce((s,l)=>s+(l.valor||0),0))} color={C.purple} sub={`${lancsFuncionario.length} pagamentos lançados`}/>
           <MetricCard small label="Diárias (total)" value={R$(custoDiariasTotal)} color={C.cyan} sub={`${diariasList.length} dias lançados`}/>
-          <MetricCard small label="Custo Acumulado" value={R$(custoFuncTotal + custoDiariasTotal)} color={C.amber} sub={`${numMeses} ${numMeses===1?"mês":"meses"} de atividade`}/>
+          <MetricCard small label="Custo Equipe Total" value={R$(lancsFuncionario.reduce((s,l)=>s+(l.valor||0),0) + custoDiariasTotal)} color={C.amber} sub={`rateado em ${obrasAtivas.length} obras`}/>
         </div>
 
         <div style={{display:"flex",gap:6,marginBottom:20,flexWrap:"wrap"}}>
@@ -1997,19 +2139,20 @@ function App() {
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>
-                    <TH>Nome</TH><TH>Função</TH><TH align="right">Salário</TH><TH align="right">Rateio/Obra</TH><TH align="right">Custo Acumulado</TH>
+                    <TH>Nome</TH><TH>Função</TH><TH align="right">Salário Base</TH><TH align="right">Pago (lançado)</TH><TH align="right">Rateio na Obra</TH>
                     {isAdmin && <TH></TH>}
                   </tr></thead>
                   <tbody>
                     {mensalistas.map(s=>{
-                      const porObra = obrasAtivas.length>0 ? (s.salario||0)/obrasAtivas.length : 0;
+                      // Total lançado para este mensalista (centro de custo = nome)
+                      const pago = lancsFuncionario.filter(l => l.centroCusto === s.nome.split(" ")[0].toUpperCase() || l.descricao?.toUpperCase().includes(s.nome.toUpperCase())).reduce((sm,l)=>sm+(l.valor||0),0);
                       return (
                         <tr key={s.id}>
                           <TD bold>{s.nome}</TD>
                           <TD><Badge text={s.funcao} color={C.accent} size="sm"/></TD>
-                          <TD mono bold align="right">{R$(s.salario)}</TD>
-                          <TD mono align="right" color={C.purple}>{R$(porObra)}</TD>
-                          <TD mono bold align="right" color={C.amber}>{R$((s.salario||0) * numMeses)}</TD>
+                          <TD mono align="right" color={C.textMuted}>{R$(s.salario)}</TD>
+                          <TD mono bold align="right" color={C.green}>{R$(pago)}</TD>
+                          <TD mono align="right" color={C.purple}>{obrasAtivas.length>0 ? R$(pago/obrasAtivas.length) : "—"}</TD>
                           {isAdmin && (
                             <TD>
                               <div style={{display:"flex",gap:4}}>
@@ -2067,7 +2210,7 @@ function App() {
           <div>
             <div style={{background:C.purple+"0c",borderRadius:14,border:`1px solid ${C.purple}33`,padding:"14px 20px",marginBottom:16}}>
               <p style={{fontSize:12,fontWeight:700,color:C.purple,marginBottom:6}}>💡 Como funciona o rateio de mensalistas</p>
-              <p style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>A folha mensal de mensalistas ({R$(totalSalariosMensal)}) é dividida igualmente entre as {obrasAtivas.length} obras em andamento, gerando um custo de {R$(rateioPorObra)} por obra por mês. O rateio é aplicado automaticamente em KPIs e custos totais da obra.</p>
+              <p style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>Os pagamentos de mensalistas são lançados manualmente na aba Funcionários. Cada lançamento é rateado igualmente entre as obras em andamento que tiveram atividade no mês correspondente. Assim, uma obra que iniciou em abril não recebe rateio de janeiro. Custos operacionais sem obra alocada também são rateados igualmente.</p>
             </div>
 
             <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
@@ -2678,7 +2821,10 @@ function App() {
             <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>🔑 Portais dos Clientes</h2>
             <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{clientesComPortal.length} clientes com portal ativo · {aditivos.length} aditivos no sistema</p>
           </div>
-          <button onClick={()=>setModal({type:"aditivoForm"})} style={btnPrimary}>＋ Propor Aditivo</button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>setModal({type:"docForm"})} style={btnGhost}>📎 Publicar Documento</button>
+            <button onClick={()=>setModal({type:"aditivoForm"})} style={btnPrimary}>＋ Propor Aditivo</button>
+          </div>
         </div>
 
         <div style={{background:C.gold+"08",borderRadius:14,border:`1px solid ${C.gold}33`,padding:"14px 20px",marginBottom:20}}>
@@ -2747,12 +2893,40 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* DOCUMENTOS PUBLICADOS */}
+        {(() => {
+          const allDocs = Object.values(data.documentos || {});
+          return allDocs.length > 0 && (
+            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",marginTop:16}}>
+              <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`}}>
+                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2}}>Documentos Publicados nos Portais</p>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    <TH>Cliente</TH><TH>Tipo</TH><TH>Título</TH><TH>Link</TH>
+                    {isAdmin && <TH></TH>}
+                  </tr></thead>
+                  <tbody>
+                    {allDocs.sort((a,b)=>(a.cliente||"").localeCompare(b.cliente||"")).map(d=>(
+                      <tr key={d.id}>
+                        <TD bold>{d.cliente}</TD>
+                        <TD><Badge text={d.tipo} color={C.cyan} size="sm"/></TD>
+                        <TD>{d.titulo}</TD>
+                        <TD><a href={d.url} target="_blank" rel="noopener noreferrer" style={{color:C.gold,fontSize:12,textDecoration:"none"}}>📎 Abrir →</a></TD>
+                        {isAdmin && <TD><button onClick={()=>fbDelDoc(d.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button></TD>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
-
-  // ══════════════════════════════════════════════════════════════
-  // RENDER PAGE SWITCH
   // ══════════════════════════════════════════════════════════════
   const renderPage = () => {
     switch(page) {
@@ -2879,6 +3053,7 @@ function App() {
       {modal?.type === "staffForm" && <StaffForm onClose={()=>setModal(null)}/>}
       {modal?.type === "staffEdit" && <StaffForm initial={modal.staff} onClose={()=>setModal(null)}/>}
       {modal?.type === "aditivoForm" && <AditivoForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "docForm" && <DocForm onClose={()=>setModal(null)}/>}
 
       {/* TOAST */}
       {toast && (
@@ -2928,3 +3103,4 @@ if (!document.getElementById("felt-erp-global-css")) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App/>);
+
