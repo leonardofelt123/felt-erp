@@ -15,7 +15,8 @@ const app = initializeApp({
   appId: "1:1031050968667:web:9158c90614ed62ac8a497e"
 });
 const fdb = getDatabase(app);
-const storage = getStorage(app);
+let storage = null;
+try { storage = getStorage(app); } catch(e) { console.warn("Firebase Storage não disponível:", e.message); }
 
 
 // ─── CONSTANTS ───
@@ -1984,11 +1985,27 @@ function App() {
     };
 
     const uploadAllFotos = async () => {
+      if (!storage) {
+        // Storage não ativado — usar previews locais como base64
+        const results = [];
+        for (const foto of fotos) {
+          try {
+            const base64 = await new Promise((res,rej) => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result);
+              reader.onerror = rej;
+              reader.readAsDataURL(foto.file);
+            });
+            results.push(base64);
+          } catch(e) { results.push(foto.preview); }
+        }
+        return results;
+      }
       const obraNome = (obras.find(o=>o.id===f.obraId)?.nome||"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
       const results = [];
       for (let i=0; i<fotos.length; i++) {
         const foto = fotos[i];
-        if (foto.url) { results.push(foto.url); continue; } // já uploaded
+        if (foto.url) { results.push(foto.url); continue; }
         setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:true} : p));
         try {
           const ext = foto.file.name.split(".").pop() || "jpg";
@@ -2000,8 +2017,8 @@ function App() {
           setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url} : p));
         } catch(err) {
           console.error("Upload falhou:", err);
-          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:"Falha no upload"} : p));
-          results.push(null);
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:"Falha"} : p));
+          results.push(foto.preview);
         }
       }
       return results.filter(Boolean);
@@ -2113,7 +2130,7 @@ function App() {
               <span style={{width:16,height:16,border:`2px solid #000`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
               Enviando {fotos.length} fotos...
             </span>
-          ) : `Salvar RDO${fotos.length>0?` (${fotos.length} fotos)`:""}`}
+          ) : "Salvar RDO" + (fotos.length>0 ? " (" + fotos.length + " fotos)" : "")}
         </button>
       </Modal>
     );
@@ -3610,44 +3627,57 @@ function App() {
           {rdosSort.map(r=>{
             const ob = obras.find(o=>o.id===r.obraId);
             const fotos = Array.isArray(r.fotos) ? r.fotos.filter(x=>x) : [];
-            const gerarPdf = () => {
-              const w = window.open("","_blank");
-              w.document.write(`<!DOCTYPE html><html><head><title>RDO - ${ob?.nome||"Obra"} - ${r.data}</title>
-              <style>
-                *{margin:0;padding:0;box-sizing:border-box}
-                body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a2e;padding:40px 50px;max-width:800px;margin:0 auto}
-                .header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0B1A3B;padding-bottom:20px;margin-bottom:24px}
-                .logo{font-size:28px;font-weight:900;color:#0B1A3B;letter-spacing:-1px}
-                .logo span{color:#C9A84C}
-                .subtitle{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:2px}
-                h1{font-size:20px;font-weight:800;color:#0B1A3B;margin-bottom:8px}
-                .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px;padding:16px;background:#f8f7f4;border-radius:8px}
-                .meta-item{font-size:12px}.meta-label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
-                .section{margin-bottom:20px}.section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#C9A84C;font-weight:700;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:4px}
-                .section-body{font-size:13px;line-height:1.7;color:#333}
-                .alert{background:#fff8e1;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:4px;font-size:12px;color:#92400e}
-                .fotos{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-                .foto-link{font-size:11px;color:#0B1A3B;text-decoration:none;padding:8px 12px;background:#f0f0f0;border-radius:6px;display:block}
-                .footer{margin-top:32px;padding-top:16px;border-top:2px solid #0B1A3B;font-size:10px;color:#888;text-align:center}
-                @media print{body{padding:20px 30px}.meta{background:#f8f7f4;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-              </style></head><body>
-              <div class="header">
-                <div><div class="logo">FELT <span>ENGENHARIA</span></div><div class="subtitle">Relatório Diário de Obra</div></div>
-                <div style="text-align:right"><div style="font-size:11px;color:#888">Data</div><div style="font-size:18px;font-weight:800">${fmtD(r.data)}</div></div>
-              </div>
-              <h1>${ob?.nome||"—"}</h1>
-              <div class="meta">
-                <div class="meta-item"><div class="meta-label">Clima</div>${r.clima||"—"}</div>
-                <div class="meta-item"><div class="meta-label">Equipe</div>${r.equipePres||"—"}</div>
-                <div class="meta-item"><div class="meta-label">Materiais recebidos</div>${r.materiaisRecebidos||"Nenhum"}</div>
-              </div>
-              <div class="section"><div class="section-title">Atividades Executadas</div><div class="section-body">${(r.atividades||"").replace(/\n/g,"<br>")}</div></div>
-              ${r.ocorrencias?`<div class="section"><div class="section-title">Ocorrências</div><div class="alert">${r.ocorrencias.replace(/\n/g,"<br>")}</div></div>`:""}
-              ${fotos.length>0?`<div class="section"><div class="section-title">Registro Fotográfico (${fotos.length} fotos)</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">${fotos.map((f,i)=>`<div style="text-align:center"><img src="${f}" style="width:100%;max-height:280px;object-fit:cover;border-radius:6px;border:1px solid #ddd" crossorigin="anonymous"/><div style="font-size:10px;color:#888;margin-top:4px">Foto ${i+1}</div></div>`).join("")}</div></div>`:""}
-              <div class="footer">Felt Engenharia · Gestão Premium de Reformas · CREA/CAU · ART registrada<br>Documento gerado em ${new Date().toLocaleString("pt-BR")}</div>
-              </body></html>`);
-              w.document.close();
-              setTimeout(()=>w.print(),500);
+            const rdoNum = rdos.filter(function(x){return x.obraId===r.obraId}).sort(function(a,b){return(a.data||"").localeCompare(b.data||"")}).findIndex(function(x){return x.id===r.id})+1;
+            const diasSemana = ["Domingo","Segunda-Feira","Terça-Feira","Quarta-Feira","Quinta-Feira","Sexta-Feira","Sábado"];
+            const dataObj = new Date(r.data+"T12:00:00");
+            const diaSemana = diasSemana[dataObj.getDay()] || "—";
+            const gerarPdf = function() {
+              var obraNome = ob ? ob.nome : "—";
+              var dataFmt = fmtD(r.data);
+              var atividades = (r.atividades||"").split("\n").filter(function(x){return x.trim()});
+              var h = "<!DOCTYPE html><html><head><title>RDO</title><style>";
+              h+="*{margin:0;padding:0;box-sizing:border-box}";
+              h+="body{font-family:Arial,sans-serif;color:#000;padding:20px 30px;max-width:800px;margin:0 auto;font-size:12px}";
+              h+=".ph{display:flex;justify-content:space-between;font-size:10px;color:#333;margin-bottom:8px}";
+              h+=".ap{background:#0B1A3B;color:#fff;padding:3px 12px;font-weight:700;font-size:10px}";
+              h+=".lb{text-align:center;padding:12px;border:1px solid #ccc}";
+              h+=".lt{font-size:22px;font-weight:900;letter-spacing:6px;color:#0B1A3B}";
+              h+="h1{font-size:14px;font-weight:700;text-align:center;padding:8px;border:1px solid #ccc;border-top:none}";
+              h+="table{width:100%;border-collapse:collapse}td,th{padding:6px 10px;border:1px solid #ccc;font-size:11px;vertical-align:top}";
+              h+="th{background:#f5f5f5;font-weight:700;text-align:left}";
+              h+=".sh{background:#f0f0f0;font-weight:700;padding:6px 10px;border:1px solid #ccc;font-size:11px}";
+              h+=".fg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc}";
+              h+=".fc{border:1px solid #ccc;padding:4px;text-align:center}.fc img{width:100%;max-height:320px;object-fit:cover}";
+              h+=".as{display:flex;justify-content:space-between;margin-top:60px}.as div{text-align:center;width:45%}";
+              h+=".al{border-top:1px solid #000;padding-top:4px;font-size:11px;margin-top:40px}";
+              h+="@page{margin:15mm 12mm}@media print{body{padding:0}}";
+              h+="</style></head><body>";
+              h+='<div class="ph"><span>Relatório '+dataFmt+' n\u00b0 '+rdoNum+'</span><span class="ap">Aprovado</span></div>';
+              h+='<div class="lb"><div class="lt">F E L T</div></div>';
+              h+="<h1>Relat\u00f3rio Di\u00e1rio de Obra (RDO)</h1>";
+              h+='<table><tr><th>Relat\u00f3rio n\u00b0</th><td>'+rdoNum+'</td><th>Data do relat\u00f3rio</th><td>'+dataFmt+'</td><th>Dia da semana</th><td>'+diaSemana+'</td></tr>';
+              h+='<tr><th>Obra</th><td colspan="5">'+obraNome+'</td></tr></table>';
+              h+='<table style="margin-top:12px"><tr><th colspan="2">Hor\u00e1rio de trabalho</th><th colspan="2">Informa\u00e7\u00f5es</th></tr>';
+              h+='<tr><td>Entrada / Sa\u00edda</td><td>-</td><td>Clima</td><td>'+(r.clima||"\u2014")+'</td></tr>';
+              h+='<tr><td>Intervalo</td><td>-</td><td>Equipe</td><td>'+(r.equipePres||"\u2014")+'</td></tr></table>';
+              h+='<table style="margin-top:12px"><tr><td class="sh" colspan="2">Atividades</td></tr>';
+              atividades.forEach(function(a){ h+='<tr><td style="padding:6px 12px">- '+a.trim()+'</td><td style="width:120px;text-align:center">Em Andamento</td></tr>'; });
+              if(!atividades.length) h+='<tr><td colspan="2">-</td></tr>';
+              h+="</table>";
+              if(r.materiaisRecebidos){ h+='<table style="margin-top:12px"><tr><td class="sh">Materiais Recebidos</td></tr><tr><td>'+r.materiaisRecebidos+'</td></tr></table>'; }
+              if(r.ocorrencias){ h+='<table style="margin-top:12px"><tr><td class="sh">Ocorr\u00eancias</td></tr><tr><td style="background:#fff8e1">'+r.ocorrencias.replace(/\n/g,"<br>")+'</td></tr></table>'; }
+              if(fotos.length>0){
+                h+='<div style="margin-top:12px"><div class="sh" style="border:1px solid #ccc">Fotos ('+fotos.length+')</div></div><div class="fg">';
+                fotos.forEach(function(f2){ h+='<div class="fc"><img src="'+f2+'"/></div>'; });
+                if(fotos.length%2!==0) h+='<div class="fc"></div>';
+                h+="</div>";
+              }
+              h+='<div class="as"><div><div class="al">Assinatura</div></div><div><div class="al">Assinatura</div></div></div>';
+              h+="</body></html>";
+              var w2 = window.open("","_blank");
+              w2.document.write(h);
+              w2.document.close();
+              setTimeout(function(){ w2.print(); },800);
             };
             return (
               <div key={r.id} style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px"}}>
