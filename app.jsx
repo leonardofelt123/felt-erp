@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, update, remove } from "firebase/database";
+import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // ─── FIREBASE ───
 const app = initializeApp({
@@ -14,6 +15,8 @@ const app = initializeApp({
   appId: "1:1031050968667:web:9158c90614ed62ac8a497e"
 });
 const fdb = getDatabase(app);
+const storage = getStorage(app);
+
 
 // ─── CONSTANTS ───
 const CC_OBRA_DEFAULT = ["MATERIAL","ADMINISTRATIVO","MÃO DE OBRA","SERVIÇOS TERCEIROS","TRANSPORTE/FRETES","IMPOSTO","RT","MARCENARIA","VIDRAÇARIA","SERRALHERIA","PINTURA","ELÉTRICA","HIDRÁULICA","IMPERMEABILIZAÇÃO"];
@@ -24,32 +27,31 @@ const FUNCOES = ["PEDREIRO","AJUDANTE","ELETRICISTA","ENCANADOR","GESSEIRO","CER
 const STATUS_OPTS = ["Em andamento","Concluída","Parada","Orçamento"];
 const FAT_STATUS = ["RECEBIDO","A VENCER","PROXIMO","VENCIDO"];
 const FAT_STATUS_COLOR = {RECEBIDO:"#34d399","A VENCER":"#22d3ee",PROXIMO:"#fbbf24",VENCIDO:"#f87171"};
-// Obra-Cliente matching para cross-reference entre custos e faturamento
 const OBRA_CLIENTE_MAP = {
-  "o1":["HL 227"],
-  "o2":["LIVING DUETT","DUETT"],
-  "o3":["EPICO 154","ANALICE"],
-  "o4":["NAU KLABIN APT 1607","NAU 1607"],
-  "o5":["LANDMARK APT 202","LANDMARK"]
+  "o1":["HL 227"],"o2":["LIVING DUETT","DUETT"],"o3":["EPICO 154","ANALICE"],
+  "o4":["NAU KLABIN APT 1607","NAU 1607"],"o5":["LANDMARK APT 202","LANDMARK"]
 };
-// Token → Cliente map para portal
 const PORTAL_TOKENS = {
-  "parkview-tanii": "PARK VIEW - FERNANDO TANII",
-  "epico-edson": "EPICO 263 EDSON",
-  "nau-klabin": "NAU KLABIN APT 1607",
-  "landmark-cleito": "LANDMARK 138 CLEITO",
-  "landmark-202": "LANDMARK APT 202",
-  "duett-mooca": "LIVING DUETT - MOOCA",
-  "epico-analice": "EPICO 154 - ANALICE",
-  "hl-227": "HL 227"
+  "parkview-tanii":"PARK VIEW - FERNANDO TANII","epico-edson":"EPICO 263 EDSON",
+  "nau-klabin":"NAU KLABIN APT 1607","landmark-cleito":"LANDMARK 138 CLEITO",
+  "landmark-202":"LANDMARK APT 202","duett-mooca":"LIVING DUETT - MOOCA",
+  "epico-analice":"EPICO 154 - ANALICE","hl-227":"HL 227"
 };
 const USERS = [
   { username:"leonardo", password:"felt2026", role:"admin", nome:"Leonardo Felt", avatar:"LF" },
   { username:"salles", password:"salles2026", role:"admin", nome:"Salles Paulo", avatar:"SP" },
   { username:"tiago", password:"tiago123", role:"viewer", nome:"Tiago Engenheiro", avatar:"TE" },
-  { username:"rafael", password:"felt2026", role:"diarista", nome:"Rafael", avatar:"RF" }
+  { username:"rafael", password:"felt2026", role:"estagiario", nome:"Rafael Estagiário", avatar:"RF" }
 ];
-
+// Etapas padrão do cronograma de obras
+const ETAPAS_PADRAO = [
+  "Demolição","Alvenaria","Instalações Elétricas","Instalações Hidráulicas",
+  "Drywall/Forro","Impermeabilização","Contrapiso","Revestimento",
+  "Pintura","Marcenaria","Vidraçaria/Serralheria","Louças e Metais",
+  "Limpeza Final","Entrega"
+];
+// Checklist obrigatório por obra
+const CHECKLIST_ITEMS = ["ART registrada","Contrato assinado","Cronograma definido","Portal criado","1ª medição"];
 // ─── SEED ───
 // IMPORTANTE: o ID interno do seed é usado como chave do Firebase (set em chave = id).
 // Isso elimina a divergência entre cob.id ("cb1") e fbKey (uid aleatório).
@@ -528,13 +530,28 @@ const btnGhost = {
   transition: "all 0.2s"
 };
 
+// ─── LOGO FELT ───
+// Monograma "F" estilizado: duas barras horizontais + haste vertical com curva inferior esquerda
+const FeltLogo = ({size=38,color=C.gold}) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
+    <rect x="18" y="18" width="58" height="11" rx="2" fill={color}/>
+    <rect x="18" y="48" width="58" height="11" rx="2" fill={color}/>
+    <path d="M18 59 L18 82 Q18 93 29 93 L38 93 L38 82 L29 82 Q29 82 29 82 L29 59" fill={color}/>
+  </svg>
+);
+
 // ══════════════════════════════════════════════════════════════════
 // ─── PORTAL DO CLIENTE ───
 // Renderizado quando a URL contém ?portal=<token>
 // Acesso completo: cronograma + status + custos + fotos + timeline + aditivos
 // ══════════════════════════════════════════════════════════════════
 function ClientPortal({ token, data }) {
-  const clienteNome = PORTAL_TOKENS[token];
+  // Buscar nome do cliente: primeiro no mapa estático, depois nos clientes do Firebase
+  let clienteNome = PORTAL_TOKENS[token];
+  if (!clienteNome && data?.clientes) {
+    const cl = Object.values(data.clientes).find(c => c.portalToken === token);
+    if (cl) clienteNome = cl.nome;
+  }
   const [tab, setTab] = useState("resumo");
 
   if (!clienteNome) {
@@ -633,11 +650,9 @@ function ClientPortal({ token, data }) {
                 width: 52, height: 52, borderRadius: 14,
                 background: `linear-gradient(135deg,${C.navy},${C.navyLight})`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 18, fontWeight: 900, color: C.gold,
-                letterSpacing: -1,
                 boxShadow: `0 8px 24px rgba(0,0,0,0.4)`,
                 border: `1px solid ${C.gold}44`
-              }}>FE</div>
+              }}><FeltLogo size={36}/></div>
               <div>
                 <p style={{fontSize:12,color:C.gold,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>Felt Engenharia · Portal do Cliente</p>
                 <h1 style={{fontSize:24,fontWeight:900,letterSpacing:-0.5}}>{clienteNome}</h1>
@@ -1040,6 +1055,7 @@ function App() {
         setUser(found);
         setLoginErr("");
         if (found.role === "diarista") setPage("funcionarios");
+        if (found.role === "estagiario") setPage("obras");
       } else setLoginErr("Credenciais inválidas");
     };
     return (
@@ -1059,10 +1075,9 @@ function App() {
               width:72,height:72,borderRadius:20,margin:"0 auto 20px",
               background:`linear-gradient(135deg,${C.navy},${C.navyLight})`,
               display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:26,fontWeight:900,color:C.gold,letterSpacing:-2,
               boxShadow:`0 12px 40px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.05)`,
               border:`1px solid ${C.gold}33`
-            }}>FE</div>
+            }}><FeltLogo size={48}/></div>
             <h1 style={{fontSize:28,fontWeight:900,color:C.text,letterSpacing:-1}}>Felt Engenharia</h1>
             <p style={{fontSize:13,color:C.textDim,marginTop:8}}>Sistema de Gestão Executiva</p>
             <div style={{width:40,height:2,background:`linear-gradient(90deg,transparent,${C.gold},transparent)`,margin:"16px auto 0"}}/>
@@ -1223,19 +1238,9 @@ function App() {
 
   const isAdmin = user.role === "admin";
   const isDiarista = user.role === "diarista";
-  const visibleNav = isDiarista
-    ? [{id:"funcionarios",label:"Equipe",emoji:"👷"}]
-    : [
-        {id:"dashboard",label:"Dashboard",emoji:"📊"},
-        {id:"obras",label:"Obras",emoji:"🏗️"},
-        {id:"faturamento",label:"Faturamento",emoji:"💰"},
-        {id:"funcionarios",label:"Equipe",emoji:"👷"},
-        {id:"operacional",label:"Operacional",emoji:"⛽"},
-        {id:"administrativo",label:"Admin",emoji:"💼"},
-        {id:"kpis",label:"KPIs",emoji:"🎯"},
-        {id:"portais",label:"Portais Cliente",emoji:"🔑"},
-        {id:"historico",label:"Histórico",emoji:"📝"}
-      ];
+  const isEstagiario = user.role === "estagiario";
+  const canEdit = isAdmin || isEstagiario;
+  const canSeeFinanceiro = isAdmin;
 
   // ══════════════════════════════════════════════════════════════
   // CRUD FIREBASE
@@ -1371,6 +1376,22 @@ function App() {
     showToast("Documento removido");
   };
 
+  // Aditivos — editar e excluir
+  const fbEditAditivo = (adId,u) => {
+    const key = Object.keys(data.aditivos||{}).find(k => data.aditivos[k].id === adId || k === adId);
+    if (!key) { showToast("Erro: aditivo não encontrado"); return; }
+    update(ref(fdb,`aditivos/${key}`), u);
+    fbLog("Aditivo editado", u.descricao || adId);
+    showToast("Aditivo atualizado");
+  };
+  const fbDelAditivo = adId => {
+    const key = Object.keys(data.aditivos||{}).find(k => data.aditivos[k].id === adId || k === adId);
+    if (!key) return;
+    remove(ref(fdb,`aditivos/${key}`));
+    fbLog("Aditivo removido", adId);
+    showToast("Aditivo removido");
+  };
+
   // Equipe
   const fbAddStaff = s => { const id = uid(); set(ref(fdb,`equipe/${id}`),{...s,id,ativo:true}); fbLog("Funcionário cadastrado",s.nome); showToast("Funcionário cadastrado"); };
   const fbEditStaff = (staffId,u) => {
@@ -1390,6 +1411,62 @@ function App() {
   const fbAddDiaria = d => { const id = uid(); set(ref(fdb,`diarias/${id}`),{...d,id}); showToast("Diária registrada"); };
   const fbDelDiaria = dId => {
     const key = Object.keys(data.diarias||{}).find(k => data.diarias[k].id === dId || k === dId);
+
+  // ════════════════════════════════════════════════════════════════
+  // NOVOS CRUDs — MÓDULOS DE GESTÃO V3
+  // ════════════════════════════════════════════════════════════════
+
+  // ─── RDO DIGITAL (item 6) ───
+  const fbAddRdo = r => { const id = uid(); set(ref(fdb,`rdos/${id}`),{...r,id}); fbLog("RDO registrado",r.obraId+" "+r.data); showToast("RDO salvo"); };
+  const fbEditRdo = (rdoId,u) => {
+    const key = Object.keys(data.rdos||{}).find(k=>data.rdos[k].id===rdoId||k===rdoId);
+    if(key) update(ref(fdb,`rdos/${key}`),u);
+    showToast("RDO atualizado");
+  };
+
+  // ─── COMPRAS (item 7) ───
+  const fbAddCompra = c => { const id = uid(); set(ref(fdb,`compras/${id}`),{...c,id}); fbLog("Compra registrada",c.item+" - "+c.fornecedor); showToast("Compra registrada"); };
+  const fbDelCompra = cId => {
+    const key = Object.keys(data.compras||{}).find(k=>data.compras[k].id===cId||k===cId);
+    if(key) remove(ref(fdb,`compras/${key}`));
+    showToast("Compra removida");
+  };
+
+  // ─── MEDIÇÕES (item 5) ───
+  const fbAddMedicao = m => {
+    const id = uid();
+    set(ref(fdb,`medicoes/${id}`),{...m,id});
+    // Auto-gerar cobrança correspondente
+    if(m.valorMedicao && m.cliente) {
+      fbAddCob({data:m.data,cliente:m.cliente,valor:m.valorMedicao,status:"A VENCER",obs:`Medição #${m.numero} — ${m.percentual}%`});
+    }
+    fbLog("Medição registrada",m.cliente+" #"+m.numero);
+    showToast("Medição registrada + cobrança gerada");
+  };
+
+  // ─── CRONOGRAMA DE ETAPAS (item 3) ───
+  const fbSaveCronograma = (obraId,etapas) => {
+    update(ref(fdb,`obras/${obraId}`),{cronograma:etapas});
+    showToast("Cronograma atualizado");
+  };
+
+  // ─── ORÇAMENTO PREVISTO (item 4) ───
+  const fbSaveOrcamento = (obraId,orc) => {
+    update(ref(fdb,`obras/${obraId}`),{orcamento:orc});
+    showToast("Orçamento salvo");
+  };
+
+  // ─── TESOURARIA (item 2) ───
+  const fbSaveSaldoInicial = val => {
+    set(ref(fdb,`config/saldoInicial`),val);
+    showToast("Saldo inicial atualizado");
+  };
+
+  // Dados derivados dos novos módulos
+  const rdos = Object.values(data.rdos||{});
+  const compras = Object.values(data.compras||{});
+  const medicoes = Object.values(data.medicoes||{});
+  const saldoInicial = data.config?.saldoInicial || 0;
     if (!key) return;
     remove(ref(fdb,`diarias/${key}`));
     showToast("Diária removida");
@@ -1734,6 +1811,47 @@ function App() {
     );
   };
 
+  const AditivoEditForm = ({initial,onClose}) => {
+    const [f,setF] = useState({
+      data: initial.data || "",
+      cliente: initial.cliente || "",
+      valor: initial.valor || "",
+      descricao: initial.descricao || "",
+      status: initial.status || "pendente"
+    });
+    const doSave = () => {
+      if (!f.cliente || !f.valor || !f.descricao) return;
+      fbEditAditivo(initial.id, { ...f, valor: parseFloat(f.valor) });
+      onClose();
+    };
+    return (
+      <Modal title="Editar Aditivo" onClose={onClose}>
+        <Field label="Cliente">
+          <input value={f.cliente} disabled style={{...inputStyle,opacity:0.6,cursor:"not-allowed"}}/>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+          <Field label="Valor (R$)">
+            <input type="number" step="0.01" value={f.valor} onChange={e=>setF(p=>({...p,valor:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="Data">
+            <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="Status">
+            <select value={f.status} onChange={e=>setF(p=>({...p,status:e.target.value}))} style={selectStyle}>
+              <option value="pendente">Pendente</option>
+              <option value="aprovado">Aprovado</option>
+              <option value="recusado">Recusado</option>
+            </select>
+          </Field>
+        </div>
+        <Field label="Descrição">
+          <textarea rows={3} value={f.descricao} onChange={e=>setF(p=>({...p,descricao:e.target.value}))} style={{...inputStyle,resize:"vertical"}}/>
+        </Field>
+        <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>Salvar Alterações</button>
+      </Modal>
+    );
+  };
+
   const DocForm = ({onClose}) => {
     const [f,setF] = useState({
       cliente: "", tipo: "RDO", titulo: "", url: "", descricao: ""
@@ -1777,7 +1895,359 @@ function App() {
     );
   };
 
+  const PortalForm = ({onClose}) => {
+    const [f,setF] = useState({ clienteId:"", tokenCustom:"" });
+    // Clientes SEM portal ativo
+    const clientesSemPortal = clientes.filter(c => !c.portalToken && !Object.values(PORTAL_TOKENS).includes(c.nome));
+    const gerarToken = nome => nome.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/-+$/,"").slice(0,30);
+    const clienteSelecionado = clientes.find(c => c.id === f.clienteId);
+    const tokenPreview = f.tokenCustom || (clienteSelecionado ? gerarToken(clienteSelecionado.nome) : "");
+    const linkPreview = tokenPreview ? `${window.location.origin}${window.location.pathname}?portal=${tokenPreview}` : "";
+
+    const doSave = () => {
+      if (!f.clienteId || !tokenPreview) return;
+      const cliente = clientes.find(c => c.id === f.clienteId);
+      if (!cliente) return;
+      // Salvar portalToken no cliente no Firebase
+      const key = Object.keys(data.clientes||{}).find(k => data.clientes[k].id === f.clienteId || k === f.clienteId);
+      if (key) {
+        update(ref(fdb,`clientes/${key}`), { portalToken: tokenPreview });
+      }
+      // Adicionar ao PORTAL_TOKENS em runtime
+      PORTAL_TOKENS[tokenPreview] = cliente.nome;
+      fbLog("Portal criado", `${cliente.nome} → ${tokenPreview}`);
+      showToast(`Portal criado para ${cliente.nome}`);
+      onClose();
+    };
+
+    return (
+      <Modal title="Criar Portal para Cliente" onClose={onClose}>
+        <Field label="Cliente" hint={clientesSemPortal.length === 0 ? "Todos os clientes já têm portal" : `${clientesSemPortal.length} clientes sem portal`}>
+          <select value={f.clienteId} onChange={e=>{
+            setF(p=>({...p,clienteId:e.target.value}));
+            const cl = clientes.find(c=>c.id===e.target.value);
+            if (cl) setF(p=>({...p,clienteId:e.target.value,tokenCustom:gerarToken(cl.nome)}));
+          }} style={selectStyle}>
+            <option value="">Selecione um cliente...</option>
+            {clientesSemPortal.map(c=><option key={c.id} value={c.id}>{c.nome} ({c.ano})</option>)}
+          </select>
+        </Field>
+        <Field label="Token do portal" hint="Usado na URL. Apenas letras minúsculas, números e hífens.">
+          <input value={f.tokenCustom || tokenPreview} onChange={e=>setF(p=>({...p,tokenCustom:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"")}))} style={inputStyle} placeholder="ex: parkview-tanii"/>
+        </Field>
+        {linkPreview && (
+          <div style={{background:C.bg,borderRadius:12,border:`1px solid ${C.gold}33`,padding:"14px 18px",marginBottom:14}}>
+            <p style={{fontSize:10,color:C.textDim,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Link que o cliente receberá</p>
+            <p style={{fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:C.gold,wordBreak:"break-all"}}>{linkPreview}</p>
+          </div>
+        )}
+        <button onClick={doSave} disabled={!f.clienteId} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0",opacity:f.clienteId?1:0.5}}>Criar Portal</button>
+      </Modal>
+    );
+  };
+
   // ══════════════════════════════════════════════════════════════
+
+  // ── NOVOS FORMS ──
+
+  const RdoForm = ({onClose}) => {
+    const [f,setF] = useState({
+      obraId: obrasAtivas[0]?.id || "",
+      data: new Date().toISOString().slice(0,10),
+      clima: "Ensolarado",
+      equipePres: "",
+      atividades: "",
+      ocorrencias: "",
+      materiaisRecebidos: ""
+    });
+    const [fotos,setFotos] = useState([]); // {file,preview,uploading,url,error}
+    const [saving,setSaving] = useState(false);
+    const fileInputRef = useRef(null);
+
+    const handleFiles = (files) => {
+      const newFotos = Array.from(files).map(file => ({
+        file,
+        preview: URL.createObjectURL(file),
+        uploading: false,
+        url: null,
+        error: null,
+        name: file.name
+      }));
+      setFotos(prev => [...prev, ...newFotos]);
+    };
+
+    const removeFoto = i => {
+      setFotos(prev => {
+        if(prev[i]?.preview) URL.revokeObjectURL(prev[i].preview);
+        return prev.filter((_,j)=>j!==i);
+      });
+    };
+
+    const uploadAllFotos = async () => {
+      const obraNome = (obras.find(o=>o.id===f.obraId)?.nome||"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
+      const results = [];
+      for (let i=0; i<fotos.length; i++) {
+        const foto = fotos[i];
+        if (foto.url) { results.push(foto.url); continue; } // já uploaded
+        setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:true} : p));
+        try {
+          const ext = foto.file.name.split(".").pop() || "jpg";
+          const path = `rdos/${obraNome}/${f.data}/${Date.now()}-${i}.${ext}`;
+          const storageRef = sRef(storage, path);
+          await uploadBytes(storageRef, foto.file);
+          const url = await getDownloadURL(storageRef);
+          results.push(url);
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url} : p));
+        } catch(err) {
+          console.error("Upload falhou:", err);
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:"Falha no upload"} : p));
+          results.push(null);
+        }
+      }
+      return results.filter(Boolean);
+    };
+
+    const doSave = async () => {
+      if(!f.obraId||!f.atividades) return;
+      setSaving(true);
+      try {
+        const urls = fotos.length > 0 ? await uploadAllFotos() : [];
+        fbAddRdo({...f, fotos: urls});
+        onClose();
+      } catch(err) {
+        console.error(err);
+        setSaving(false);
+      }
+    };
+
+    return (
+      <Modal title="Registrar RDO" onClose={onClose} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+          <Field label="Obra">
+            <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
+              {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+            </select>
+          </Field>
+          <Field label="Data">
+            <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="Clima">
+            <select value={f.clima} onChange={e=>setF(p=>({...p,clima:e.target.value}))} style={selectStyle}>
+              {["Ensolarado","Nublado","Chuva leve","Chuva forte","Parcialmente nublado"].map(c=><option key={c}>{c}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Equipe presente">
+          <input value={f.equipePres} onChange={e=>setF(p=>({...p,equipePres:e.target.value}))} style={inputStyle} placeholder="Ex: Noel, Allef, Carlos"/>
+        </Field>
+        <Field label="Atividades executadas">
+          <textarea rows={3} value={f.atividades} onChange={e=>setF(p=>({...p,atividades:e.target.value}))} style={{...inputStyle,resize:"vertical"}} placeholder="Descreva as atividades realizadas no dia..."/>
+        </Field>
+        <Field label="Ocorrências / Observações">
+          <textarea rows={2} value={f.ocorrencias} onChange={e=>setF(p=>({...p,ocorrencias:e.target.value}))} style={{...inputStyle,resize:"vertical"}} placeholder="Problemas, atrasos, pendências..."/>
+        </Field>
+        <Field label="Materiais recebidos no dia">
+          <input value={f.materiaisRecebidos} onChange={e=>setF(p=>({...p,materiaisRecebidos:e.target.value}))} style={inputStyle} placeholder="Ex: 50 sacos cimento, 20m² porcelanato"/>
+        </Field>
+
+        {/* UPLOAD DE FOTOS — direto da galeria */}
+        <Field label={`Fotos do dia (${fotos.length} selecionadas)`} hint="Selecione da galeria do celular ou câmera. Múltiplas fotos de uma vez.">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            capture="environment"
+            onChange={e=>handleFiles(e.target.files)}
+            style={{display:"none"}}
+          />
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            <button onClick={()=>fileInputRef.current?.click()} style={{
+              ...btnGhost,flex:1,justifyContent:"center",padding:"14px 0",
+              borderColor:C.gold+"44",color:C.gold,fontSize:13
+            }}>📸 Selecionar da galeria</button>
+            <button onClick={()=>{
+              const inp = document.createElement("input");
+              inp.type="file"; inp.accept="image/*"; inp.capture="environment";
+              inp.onchange=e=>handleFiles(e.target.files);
+              inp.click();
+            }} style={{
+              ...btnGhost,justifyContent:"center",padding:"14px 16px",
+              borderColor:C.cyan+"44",color:C.cyan,fontSize:13
+            }}>📷 Tirar foto</button>
+          </div>
+
+          {fotos.length > 0 && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:8}}>
+              {fotos.map((foto,i)=>(
+                <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:`1px solid ${foto.error?C.red:foto.url?C.green:C.border}`,aspectRatio:"1"}}>
+                  <img src={foto.preview} alt={`Foto ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  {foto.uploading && (
+                    <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <div style={{width:24,height:24,border:`2px solid ${C.gold}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+                    </div>
+                  )}
+                  {foto.url && (
+                    <div style={{position:"absolute",top:4,left:4,background:C.green,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff"}}>✓</div>
+                  )}
+                  {foto.error && (
+                    <div style={{position:"absolute",bottom:0,left:0,right:0,background:C.red+"dd",padding:"4px",fontSize:9,color:"#fff",textAlign:"center"}}>{foto.error}</div>
+                  )}
+                  <button onClick={()=>removeFoto(i)} style={{
+                    position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.7)",border:"none",
+                    color:"#fff",width:22,height:22,borderRadius:"50%",cursor:"pointer",fontSize:12,
+                    display:"flex",alignItems:"center",justifyContent:"center"
+                  }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Field>
+
+        <button onClick={doSave} disabled={saving} style={{
+          ...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0",
+          opacity:saving?0.6:1,cursor:saving?"wait":"pointer"
+        }}>
+          {saving ? (
+            <span style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{width:16,height:16,border:`2px solid #000`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+              Enviando {fotos.length} fotos...
+            </span>
+          ) : `Salvar RDO${fotos.length>0?` (${fotos.length} fotos)`:""}`}
+        </button>
+      </Modal>
+    );
+  };
+
+  const CompraForm = ({onClose}) => {
+    const [f,setF] = useState({
+      obraId: obrasAtivas[0]?.id||"",
+      data: new Date().toISOString().slice(0,10),
+      item: "", fornecedor: "", quantidade: "", unidade: "un",
+      valorUnitario: "", nfFornecedor: ""
+    });
+    const doSave = () => {
+      if(!f.item||!f.valorUnitario) return;
+      const d = {...f,valorUnitario:parseFloat(f.valorUnitario),quantidade:parseFloat(f.quantidade)||1,valorTotal:(parseFloat(f.valorUnitario)||0)*(parseFloat(f.quantidade)||1)};
+      fbAddCompra(d);
+      // Auto-criar lançamento de obra correspondente
+      if(f.obraId){
+        fbAddLanc({descricao:`${f.item} — ${f.fornecedor}`,valor:d.valorTotal,data:f.data,centroCusto:"MATERIAL",obs:`NF: ${f.nfFornecedor||"—"} | Qtd: ${f.quantidade} ${f.unidade}`,obraId:f.obraId,tipo:"obra"});
+      }
+      onClose();
+    };
+    return (
+      <Modal title="Registrar Compra" onClose={onClose} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <Field label="Obra">
+            <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
+              <option value="">Sem obra (geral)</option>
+              {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+            </select>
+          </Field>
+          <Field label="Data">
+            <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
+          </Field>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:14}}>
+          <Field label="Item / Material">
+            <input value={f.item} onChange={e=>setF(p=>({...p,item:e.target.value}))} style={inputStyle} placeholder="Ex: Porcelanato 60x120 acetinado"/>
+          </Field>
+          <Field label="Fornecedor">
+            <input value={f.fornecedor} onChange={e=>setF(p=>({...p,fornecedor:e.target.value}))} style={inputStyle} placeholder="Ex: Leroy Merlin"/>
+          </Field>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:14}}>
+          <Field label="Qtd">
+            <input type="number" value={f.quantidade} onChange={e=>setF(p=>({...p,quantidade:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="Un.">
+            <select value={f.unidade} onChange={e=>setF(p=>({...p,unidade:e.target.value}))} style={selectStyle}>
+              {["un","m²","m³","m","kg","L","sc","pç","cx","rl"].map(u=><option key={u}>{u}</option>)}
+            </select>
+          </Field>
+          <Field label="Valor unitário">
+            <input type="number" step="0.01" value={f.valorUnitario} onChange={e=>setF(p=>({...p,valorUnitario:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="NF fornecedor">
+            <input value={f.nfFornecedor} onChange={e=>setF(p=>({...p,nfFornecedor:e.target.value}))} style={inputStyle} placeholder="Nº NF"/>
+          </Field>
+        </div>
+        {f.valorUnitario && f.quantidade && (
+          <div style={{background:C.bg,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between"}}>
+            <span style={{fontSize:12,color:C.textMuted}}>Total da compra:</span>
+            <span style={{fontSize:16,fontWeight:800,color:C.gold,fontFamily:"'JetBrains Mono',monospace"}}>{R$((parseFloat(f.valorUnitario)||0)*(parseFloat(f.quantidade)||1))}</span>
+          </div>
+        )}
+        <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>Registrar Compra</button>
+      </Modal>
+    );
+  };
+
+  const MedicaoForm = ({onClose}) => {
+    const [f,setF] = useState({
+      obraId: obrasAtivas[0]?.id||"",
+      data: new Date().toISOString().slice(0,10),
+      numero: (medicoes.length+1)+"",
+      percentual: "",
+      cliente: "",
+      descricao: ""
+    });
+    const obraSel = obras.find(o=>o.id===f.obraId);
+    const valorMedicao = obraSel ? (obraSel.contrato||0) * (parseFloat(f.percentual)||0)/100 : 0;
+    // Auto-preencher cliente
+    const autoCliente = (() => {
+      if(!f.obraId) return "";
+      const keys = OBRA_CLIENTE_MAP[f.obraId]||[];
+      const cl = clientes.find(c => keys.some(k => c.nome.toUpperCase().includes(k.toUpperCase())));
+      return cl?.nome || "";
+    })();
+    const doSave = () => {
+      if(!f.obraId||!f.percentual) return;
+      const cliente = f.cliente || autoCliente;
+      fbAddMedicao({...f,cliente,valorMedicao,percentual:parseFloat(f.percentual)});
+      // Atualizar execução da obra
+      if(obraSel) {
+        const totalMedido = medicoes.filter(m=>m.obraId===f.obraId).reduce((s,m)=>s+(m.percentual||0),0) + parseFloat(f.percentual);
+        fbEditObra(f.obraId, {execucaoManual: Math.min(totalMedido,100)});
+      }
+      onClose();
+    };
+    return (
+      <Modal title="Registrar Medição" onClose={onClose}>
+        <Field label="Obra">
+          <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
+            {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+          </select>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+          <Field label="Medição #">
+            <input type="number" value={f.numero} onChange={e=>setF(p=>({...p,numero:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="% executado neste período">
+            <input type="number" step="0.1" value={f.percentual} onChange={e=>setF(p=>({...p,percentual:e.target.value}))} style={inputStyle} placeholder="Ex: 15"/>
+          </Field>
+          <Field label="Data">
+            <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
+          </Field>
+        </div>
+        <Field label="Cliente" hint="Auto-preenchido pela obra">
+          <input value={f.cliente||autoCliente} onChange={e=>setF(p=>({...p,cliente:e.target.value}))} style={inputStyle}/>
+        </Field>
+        {valorMedicao > 0 && (
+          <div style={{background:C.green+"12",borderRadius:10,padding:"12px 16px",marginBottom:14,border:`1px solid ${C.green}33`}}>
+            <p style={{fontSize:11,color:C.textDim}}>Valor da medição ({f.percentual}% de {R$(obraSel?.contrato)}):</p>
+            <p style={{fontSize:20,fontWeight:800,color:C.green,fontFamily:"'JetBrains Mono',monospace"}}>{R$(valorMedicao)}</p>
+            <p style={{fontSize:11,color:C.textMuted,marginTop:4}}>Uma cobrança será gerada automaticamente</p>
+          </div>
+        )}
+        <Field label="Descrição">
+          <input value={f.descricao} onChange={e=>setF(p=>({...p,descricao:e.target.value}))} style={inputStyle} placeholder="Ex: Alvenaria + elétrica concluídas"/>
+        </Field>
+        <button onClick={doSave} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0"}}>Registrar Medição</button>
+      </Modal>
+    );
+  };
   // PAGES
   // ══════════════════════════════════════════════════════════════
 
@@ -1829,6 +2299,96 @@ function App() {
           )}
         </div>
       )}
+
+      {/* GESTÃO INTELIGENTE */}
+      {(() => {
+        // Alerta: obras sem lançamento há 15+ dias
+        const hojeMs = new Date("2026-04-15").getTime();
+        const obrasSemLanc = obrasAtivas.filter(o => {
+          const lancsObra = lancs.filter(l => l.obraId === o.id);
+          if (!lancsObra.length) return true;
+          const ultData = Math.max(...lancsObra.map(l => new Date(l.data).getTime()));
+          return (hojeMs - ultData) > 15 * 86400000;
+        });
+        // Alerta: aditivos aprovados sem impacto no contrato
+        const aditivosAprovados = aditivos.filter(a => a.status === "aprovado");
+        // Alerta: obras sem NF emitida com mais de 30% recebido
+        const obrasSemNf = obrasAtivas.filter(o => {
+          const recebido = obraRecebido(o.id);
+          const temNf = nfsList.some(n => {
+            const keys = OBRA_CLIENTE_MAP[o.id] || [];
+            return keys.some(k => n.cliente?.toUpperCase().includes(k.toUpperCase()));
+          });
+          return recebido > (o.contrato * 0.3) && !temNf;
+        });
+        // Checklist por obra: itens obrigatórios
+        const CHECKLIST_ITEMS = ["ART registrada","Contrato assinado","Cronograma definido","Portal criado","1ª medição"];
+        const obrasChecklist = obrasAtivas.map(o => {
+          const ck = o.checklist || {};
+          const done = CHECKLIST_ITEMS.filter(item => ck[item]);
+          return { ...o, ck, done: done.length, total: CHECKLIST_ITEMS.length };
+        });
+        const obrasChecklistIncompleto = obrasChecklist.filter(o => o.done < o.total);
+
+        const hasAlerts = obrasSemLanc.length > 0 || aditivosAprovados.length > 0 || obrasSemNf.length > 0 || obrasChecklistIncompleto.length > 0;
+        if (!hasAlerts) return null;
+
+        return (
+          <div style={{marginBottom:20,display:"grid",gap:10}}>
+            {obrasSemLanc.length > 0 && (
+              <div style={{background:C.purple+"10",borderRadius:14,border:`1px solid ${C.purple}33`,padding:"14px 20px"}}>
+                <p style={{fontSize:13,fontWeight:800,color:C.purple}}>🔕 {obrasSemLanc.length} obras sem lançamento há 15+ dias</p>
+                <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>
+                  {obrasSemLanc.map(o=>(
+                    <span key={o.id} onClick={()=>{setSelObra(o.id);setPage("obras");}} style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:C.purple+"18",color:C.purple,cursor:"pointer"}}>{o.nome}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {obrasSemNf.length > 0 && (
+              <div style={{background:C.cyan+"10",borderRadius:14,border:`1px solid ${C.cyan}33`,padding:"14px 20px"}}>
+                <p style={{fontSize:13,fontWeight:800,color:C.cyan}}>🧾 {obrasSemNf.length} obras com recebimento sem NF emitida</p>
+                <p style={{fontSize:11,color:C.textMuted,marginTop:4}}>Já receberam mais de 30% do contrato mas não têm NF registrada no sistema</p>
+              </div>
+            )}
+            {aditivosAprovados.length > 0 && (
+              <div style={{background:C.green+"10",borderRadius:14,border:`1px solid ${C.green}33`,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                <div>
+                  <p style={{fontSize:13,fontWeight:800,color:C.green}}>✍️ {aditivosAprovados.length} aditivos aprovados — {R$(aditivosAprovados.reduce((s,a)=>s+(a.valor||0),0))}</p>
+                  <p style={{fontSize:11,color:C.textMuted,marginTop:4}}>Valor pode ser somado ao contrato das respectivas obras</p>
+                </div>
+                <button onClick={()=>{
+                  aditivosAprovados.forEach(a => {
+                    // Encontrar obra do cliente e somar ao contrato
+                    const cl = clientes.find(c => c.nome === a.cliente);
+                    if (!cl) return;
+                    const obra = obras.find(o => {
+                      const keys = OBRA_CLIENTE_MAP[o.id] || [];
+                      return keys.some(k => a.cliente.toUpperCase().includes(k.toUpperCase()));
+                    });
+                    if (obra) {
+                      fbEditObra(obra.id, { contrato: (obra.contrato||0) + (a.valor||0) });
+                    }
+                    // Mudar status para "aplicado"
+                    fbEditAditivo(a.id, { status: "aplicado" });
+                  });
+                  showToast("Aditivos aplicados aos contratos");
+                }} style={{...btnGhost,borderColor:C.green+"44",color:C.green,fontSize:11}}>Aplicar ao contrato →</button>
+              </div>
+            )}
+            {obrasChecklistIncompleto.length > 0 && (
+              <div style={{background:C.gold+"10",borderRadius:14,border:`1px solid ${C.gold}33`,padding:"14px 20px"}}>
+                <p style={{fontSize:13,fontWeight:800,color:C.gold}}>📋 Checklist incompleto em {obrasChecklistIncompleto.length} obras</p>
+                <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+                  {obrasChecklistIncompleto.map(o=>(
+                    <span key={o.id} style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:C.gold+"18",color:C.gold}}>{o.nome.replace("OBRA ","")} — {o.done}/{o.total}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* KPIs GERAIS */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:20}}>
@@ -1933,22 +2493,61 @@ function App() {
                 {o.semDadosReais && <Badge text="AGUARDANDO INÍCIO" color={C.amber}/>}
               </div>
             </div>
-            {isAdmin && (
+            {(isAdmin || isEstagiario) && (
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setModal({type:"obraEdit",obra:o})} style={btnGhost}>✏️ Editar</button>
+                {isAdmin && <button onClick={()=>setModal({type:"obraEdit",obra:o})} style={btnGhost}>✏️ Editar</button>}
+                {isAdmin && <button onClick={()=>{
+                  if(window.confirm(`Tem certeza que deseja excluir "${o.nome}"?\n\nTodos os lançamentos desta obra também serão removidos. Esta ação não pode ser desfeita.`))
+                    fbDelObra(o.id);
+                }} style={{...btnGhost,borderColor:C.red+"44",color:C.red}}>🗑️ Excluir</button>}
                 <button onClick={()=>setModal({type:"lancForm",tipo:"obra"})} style={btnPrimary}>＋ Lançamento</button>
               </div>
             )}
           </div>
 
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:20}}>
-            <MetricCard small label="Contrato" value={R$(o.contrato)} color={C.accent}/>
-            <MetricCard small label="Custo Total" value={R$(o.custo)} color={C.amber} sub={`Direto: ${R$(o.custoDireto)}`}/>
-            <MetricCard small label="Lucro Bruto" value={R$(o.lucroBruto)} color={o.lucroBruto>=0?C.green:C.red}/>
-            <MetricCard small label="Margem" value={pct(o.margem)} color={o.margem>=0.25?C.green:o.margem>=0.1?C.amber:C.red}/>
-            <MetricCard small label="Execução" value={pct(o.execucao)} color={o.execucao>0.8?C.red:o.execucao>0.6?C.amber:C.green}/>
-            <MetricCard small label="Já Recebido" value={R$(recebido)} color={C.cyan}/>
-          </div>
+          {canSeeFinanceiro && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:20}}>
+              <MetricCard small label="Contrato" value={R$(o.contrato)} color={C.accent}/>
+              <MetricCard small label="Custo Total" value={R$(o.custo)} color={C.amber} sub={`Direto: ${R$(o.custoDireto)}`}/>
+              <MetricCard small label="Lucro Bruto" value={R$(o.lucroBruto)} color={o.lucroBruto>=0?C.green:C.red}/>
+              <MetricCard small label="Margem" value={pct(o.margem)} color={o.margem>=0.25?C.green:o.margem>=0.1?C.amber:C.red}/>
+              <MetricCard small label="Execução" value={pct(o.execucao)} color={o.execucao>0.8?C.red:o.execucao>0.6?C.amber:C.green}/>
+              <MetricCard small label="Já Recebido" value={R$(recebido)} color={C.cyan}/>
+            </div>
+          )}
+
+          {/* CHECKLIST DA OBRA */}
+          {isAdmin && (
+            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
+              <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Checklist de Abertura</p>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                {["ART registrada","Contrato assinado","Cronograma definido","Portal criado","1ª medição"].map(item => {
+                  const ck = o.checklist || {};
+                  const done = !!ck[item];
+                  return (
+                    <button key={item} onClick={()=>{
+                      const newCk = {...(o.checklist||{}), [item]: !done};
+                      fbEditObra(o.id, {checklist: newCk});
+                    }} style={{
+                      padding:"8px 14px",
+                      borderRadius:10,
+                      border:`1px solid ${done?C.green+"66":C.border}`,
+                      background: done ? C.green+"12" : C.bg,
+                      color: done ? C.green : C.textMuted,
+                      fontSize:12,
+                      fontWeight: done ? 700 : 400,
+                      cursor:"pointer",
+                      transition:"all 0.2s",
+                      display:"flex",alignItems:"center",gap:6
+                    }}>
+                      <span style={{fontSize:14}}>{done ? "✅" : "⬜"}</span>
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
             <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Custo por Centro</p>
@@ -1988,8 +2587,8 @@ function App() {
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>
-                  <TH>Data</TH><TH>Descrição</TH><TH>C.Custo</TH><TH align="right">Valor</TH><TH>Obs</TH>
-                  {isAdmin && <TH></TH>}
+                  <TH>Data</TH><TH>Descrição</TH><TH>C.Custo</TH>{canSeeFinanceiro && <TH align="right">Valor</TH>}<TH>Obs</TH>
+                  {canEdit && <TH></TH>}
                 </tr></thead>
                 <tbody>
                   {ls.map(l=>(
@@ -1997,13 +2596,13 @@ function App() {
                       <TD>{fmtD(l.data)}</TD>
                       <TD bold>{l.descricao}</TD>
                       <TD><Badge text={l.centroCusto} color={C.purple} size="sm"/></TD>
-                      <TD mono bold align="right">{R$(l.valor)}</TD>
+                      {canSeeFinanceiro && <TD mono bold align="right">{R$(l.valor)}</TD>}
                       <TD color={C.textDim}>{l.obs||"—"}</TD>
-                      {isAdmin && (
+                      {canEdit && (
                         <TD>
                           <div style={{display:"flex",gap:4}}>
                             <button onClick={()=>setModal({type:"lancEdit",lanc:l,tipo:"obra"})} style={{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:14}}>✏️</button>
-                            <button onClick={()=>fbDelLanc(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button>
+                            {isAdmin && <button onClick={()=>fbDelLanc(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button>}
                           </div>
                         </TD>
                       )}
@@ -2039,24 +2638,30 @@ function App() {
                   <p style={{fontSize:15,fontWeight:800,letterSpacing:-0.3}}>{o.nome}</p>
                   {o.semDadosReais ? <Badge text="AGUARDANDO" color={C.amber} size="sm"/> : <Badge text={o.status} color={o.status==="Em andamento"?C.green:C.textMuted} size="sm"/>}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12,marginBottom:14}}>
-                  <div>
-                    <span style={{color:C.textDim,fontSize:10}}>CONTRATO</span>
-                    <p style={{fontWeight:700,fontSize:14,marginTop:2,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.contrato)}</p>
+                {canSeeFinanceiro ? (
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12,marginBottom:14}}>
+                    <div>
+                      <span style={{color:C.textDim,fontSize:10}}>CONTRATO</span>
+                      <p style={{fontWeight:700,fontSize:14,marginTop:2,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.contrato)}</p>
+                    </div>
+                    <div>
+                      <span style={{color:C.textDim,fontSize:10}}>CUSTO</span>
+                      <p style={{fontWeight:700,fontSize:14,marginTop:2,color:C.amber,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.custo)}</p>
+                    </div>
+                    <div>
+                      <span style={{color:C.textDim,fontSize:10}}>LUCRO</span>
+                      <p style={{fontWeight:700,fontSize:14,marginTop:2,color:o.lucroBruto>=0?C.green:C.red,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.lucroBruto)}</p>
+                    </div>
+                    <div>
+                      <span style={{color:C.textDim,fontSize:10}}>MARGEM</span>
+                      <p style={{fontWeight:700,fontSize:14,marginTop:2,color:sc}}>{pct(o.margem)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span style={{color:C.textDim,fontSize:10}}>CUSTO</span>
-                    <p style={{fontWeight:700,fontSize:14,marginTop:2,color:C.amber,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.custo)}</p>
+                ) : (
+                  <div style={{fontSize:12,marginBottom:14}}>
+                    <p style={{color:C.textDim,fontSize:11}}>Status: <b style={{color:C.text}}>{o.status}</b></p>
                   </div>
-                  <div>
-                    <span style={{color:C.textDim,fontSize:10}}>LUCRO</span>
-                    <p style={{fontWeight:700,fontSize:14,marginTop:2,color:o.lucroBruto>=0?C.green:C.red,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.lucroBruto)}</p>
-                  </div>
-                  <div>
-                    <span style={{color:C.textDim,fontSize:10}}>MARGEM</span>
-                    <p style={{fontWeight:700,fontSize:14,marginTop:2,color:sc}}>{pct(o.margem)}</p>
-                  </div>
-                </div>
+                )}
                 <div>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                     <span style={{fontSize:10,color:C.textDim}}>EXECUÇÃO</span>
@@ -2711,73 +3316,243 @@ function App() {
     );
   };
 
-  // ── KPIs RECONSTRUÍDA ──
-  // Corrige o bug de obras sem dados lançados aparecerem com margem 100%.
-  const KPIsPage = () => {
-    // Matriz CC × Obra
-    const allCCs = [...new Set(lancs.filter(l=>l.tipo==="obra").map(l=>l.centroCusto))].sort();
+  // ══════════════════════════════════════════════════════════════
+  // NOVAS PAGES — MÓDULOS V3
+  // ══════════════════════════════════════════════════════════════
+
+  // ── TESOURARIA (item 2) — Fluxo de caixa real com saldo diário ──
+  const TesourariaPage = () => {
+    const [editSaldo,setEditSaldo] = useState(false);
+    const [novoSaldo,setNovoSaldo] = useState(saldoInicial);
+
+    // Construir fluxo diário: entradas (cobranças recebidas) - saídas (lançamentos pagos)
+    const movimentos = [];
+    cobs.filter(c=>c.status==="RECEBIDO").forEach(c=>movimentos.push({data:c.data,tipo:"entrada",desc:c.cliente,valor:c.valor||0,cat:"Cobrança"}));
+    lancs.forEach(l=>movimentos.push({data:l.data,tipo:"saida",desc:l.descricao,valor:l.valor||0,cat:l.centroCusto||l.tipo}));
+    movimentos.sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+
+    const totalEntradas = movimentos.filter(m=>m.tipo==="entrada").reduce((s,m)=>s+m.valor,0);
+    const totalSaidas = movimentos.filter(m=>m.tipo==="saida").reduce((s,m)=>s+m.valor,0);
+    const saldoAtual = saldoInicial + totalEntradas - totalSaidas;
+
+    // Saldo por mês
+    const mesesFluxo = [...new Set(movimentos.map(m=>m.data?.slice(0,7)).filter(Boolean))].sort();
+    const fluxoPorMes = mesesFluxo.map(m=>{
+      const ent = movimentos.filter(x=>x.data?.startsWith(m)&&x.tipo==="entrada").reduce((s,x)=>s+x.valor,0);
+      const sai = movimentos.filter(x=>x.data?.startsWith(m)&&x.tipo==="saida").reduce((s,x)=>s+x.valor,0);
+      return {mes:m,entradas:ent,saidas:sai,saldo:ent-sai};
+    });
+
     return (
       <div>
-        <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1,marginBottom:24}}>🎯 KPIs Avançados</h2>
-
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
-          <MetricCard small label="Inadimplência" value={pct(inadimplencia)} color={inadimplencia>0.15?C.red:inadimplencia>0.05?C.amber:C.green} sub={R$(totalVencido) + " em atraso"}/>
-          <MetricCard small label="Concentração TOP 3" value={pct(concentracao)} color={concentracao>0.4?C.red:concentracao>0.25?C.amber:C.green} sub={"de " + clientes.length + " clientes"}/>
-          <MetricCard small label="Obras em Risco" value={obrasRisco.length + ""} color={obrasRisco.length>0?C.red:C.green} sub="execução>60% + margem<20%"/>
-          <MetricCard small label="Burn Rate" value={R$(burnRate)} color={C.amber} sub="média despesa/mês"/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+          <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>🏦 Tesouraria</h2>
+          {editSaldo ? (
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <span style={{fontSize:12,color:C.textDim}}>Saldo inicial:</span>
+              <input type="number" value={novoSaldo} onChange={e=>setNovoSaldo(e.target.value)} style={{...inputStyle,width:140,padding:"6px 12px"}}/>
+              <button onClick={()=>{fbSaveSaldoInicial(parseFloat(novoSaldo)||0);setEditSaldo(false);}} style={{...btnPrimary,padding:"8px 14px",fontSize:12}}>Salvar</button>
+            </div>
+          ) : (
+            <button onClick={()=>setEditSaldo(true)} style={btnGhost}>✏️ Saldo inicial: {R$(saldoInicial)}</button>
+          )}
         </div>
 
-        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px",marginBottom:20}}>
-          <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Rentabilidade & Execução por Obra</p>
-          <div style={{overflowX:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
+          <MetricCard label="Saldo Atual" value={R$(saldoAtual)} color={saldoAtual>=0?C.green:C.red} sub="Saldo inicial + entradas - saídas"/>
+          <MetricCard label="Total Entradas" value={R$(totalEntradas)} color={C.green} sub={movimentos.filter(m=>m.tipo==="entrada").length+" recebimentos"}/>
+          <MetricCard label="Total Saídas" value={R$(totalSaidas)} color={C.red} sub={movimentos.filter(m=>m.tipo==="saida").length+" pagamentos"}/>
+          <MetricCard label="Saldo Inicial" value={R$(saldoInicial)} color={C.accent}/>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(fluxoPorMes.length,6)},1fr)`,gap:10,marginBottom:20}}>
+          {fluxoPorMes.map(f=>(
+            <div key={f.mes} style={{background:C.surface,borderRadius:12,padding:"16px 18px",border:`1px solid ${C.border}`}}>
+              <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1}}>{f.mes.replace("-","/")}</p>
+              <p style={{fontSize:18,fontWeight:800,color:f.saldo>=0?C.green:C.red,marginTop:6,fontFamily:"'JetBrains Mono',monospace"}}>{R$(f.saldo)}</p>
+              <div style={{marginTop:8,fontSize:10,color:C.textMuted}}>
+                <span style={{color:C.green}}>↑{R$(f.entradas)}</span>
+                <span style={{marginLeft:8,color:C.red}}>↓{R$(f.saidas)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+          <div style={{overflowX:"auto",maxHeight:500}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr>
-                <TH>Obra</TH><TH align="right">Contrato</TH><TH align="right">Custo Total</TH><TH align="right">Lucro</TH><TH align="right">Margem</TH><TH align="right">Execução</TH><TH align="right">ROI</TH><TH>Estado</TH>
+              <thead style={{position:"sticky",top:0,background:C.surface,zIndex:1}}><tr>
+                <TH>Data</TH><TH>Tipo</TH><TH>Descrição</TH><TH>Categoria</TH><TH align="right">Valor</TH>
               </tr></thead>
               <tbody>
-                {obraKPIs.map(o=>(
-                  <tr key={o.id} style={{opacity:o.semDadosReais?0.6:1}}>
-                    <TD bold>{o.nome}</TD>
-                    <TD mono align="right">{R$(o.contrato)}</TD>
-                    <TD mono align="right" color={C.amber}>{R$(o.custo)}</TD>
-                    <TD mono bold align="right" color={o.lucroBruto>=0?C.green:C.red}>{R$(o.lucroBruto)}</TD>
-                    <TD mono bold align="right" color={o.margem>=0.25?C.green:o.margem>=0.1?C.amber:C.red}>
-                      {o.semDadosReais ? "—" : pct(o.margem)}
-                    </TD>
-                    <TD mono align="right" color={o.execucao>0.8?C.red:o.execucao>0.6?C.amber:C.text}>{pct(o.execucao)}</TD>
-                    <TD mono align="right">{o.semDadosReais ? "—" : pct(o.roi)}</TD>
-                    <TD>
-                      {o.semDadosReais ? <Badge text="AGUARDANDO" color={C.amber} size="sm"/> :
-                       o.execucao>0.8 && o.margem<0.15 ? <Badge text="RISCO" color={C.red} size="sm"/> :
-                       o.margem>=0.25 ? <Badge text="ÓTIMA" color={C.green} size="sm"/> :
-                       <Badge text="NORMAL" color={C.cyan} size="sm"/>}
-                    </TD>
+                {movimentos.slice().reverse().slice(0,100).map((m,i)=>(
+                  <tr key={i}>
+                    <TD>{fmtD(m.data)}</TD>
+                    <TD><Badge text={m.tipo==="entrada"?"ENTRADA":"SAÍDA"} color={m.tipo==="entrada"?C.green:C.red} size="sm"/></TD>
+                    <TD bold>{m.desc}</TD>
+                    <TD color={C.textDim}>{m.cat}</TD>
+                    <TD mono bold align="right" color={m.tipo==="entrada"?C.green:C.red}>{m.tipo==="entrada"?"+":"-"}{R$(m.valor)}</TD>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
+      </div>
+    );
+  };
 
-        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px",marginBottom:20}}>
-          <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Matriz Centro de Custo × Obra</p>
+  // ── RDO DIGITAL (item 6) ──
+  const RdoPage = () => {
+    const [filtroObra,setFiltroObra] = useState("todos");
+    const rdosFilt = filtroObra==="todos" ? rdos : rdos.filter(r=>r.obraId===filtroObra);
+    const rdosSort = [...rdosFilt].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+          <div>
+            <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>📋 RDO Digital</h2>
+            <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{rdos.length} relatórios registrados</p>
+          </div>
+          {canEdit && <button onClick={()=>setModal({type:"rdoForm"})} style={btnPrimary}>＋ Novo RDO</button>}
+        </div>
+
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          <button onClick={()=>setFiltroObra("todos")} style={{...btnGhost,borderColor:filtroObra==="todos"?C.accent:C.border,color:filtroObra==="todos"?C.accent:C.textMuted}}>Todas</button>
+          {obrasAtivas.map(o=>(
+            <button key={o.id} onClick={()=>setFiltroObra(o.id)} style={{...btnGhost,borderColor:filtroObra===o.id?C.accent:C.border,color:filtroObra===o.id?C.accent:C.textMuted,fontSize:11}}>{o.nome.replace("OBRA ","")}</button>
+          ))}
+        </div>
+
+        <div style={{display:"grid",gap:12}}>
+          {rdosSort.map(r=>{
+            const ob = obras.find(o=>o.id===r.obraId);
+            const fotos = Array.isArray(r.fotos) ? r.fotos.filter(x=>x) : [];
+            const gerarPdf = () => {
+              const w = window.open("","_blank");
+              w.document.write(`<!DOCTYPE html><html><head><title>RDO - ${ob?.nome||"Obra"} - ${r.data}</title>
+              <style>
+                *{margin:0;padding:0;box-sizing:border-box}
+                body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1a1a2e;padding:40px 50px;max-width:800px;margin:0 auto}
+                .header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0B1A3B;padding-bottom:20px;margin-bottom:24px}
+                .logo{font-size:28px;font-weight:900;color:#0B1A3B;letter-spacing:-1px}
+                .logo span{color:#C9A84C}
+                .subtitle{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:2px}
+                h1{font-size:20px;font-weight:800;color:#0B1A3B;margin-bottom:8px}
+                .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px;padding:16px;background:#f8f7f4;border-radius:8px}
+                .meta-item{font-size:12px}.meta-label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
+                .section{margin-bottom:20px}.section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#C9A84C;font-weight:700;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:4px}
+                .section-body{font-size:13px;line-height:1.7;color:#333}
+                .alert{background:#fff8e1;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:4px;font-size:12px;color:#92400e}
+                .fotos{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+                .foto-link{font-size:11px;color:#0B1A3B;text-decoration:none;padding:8px 12px;background:#f0f0f0;border-radius:6px;display:block}
+                .footer{margin-top:32px;padding-top:16px;border-top:2px solid #0B1A3B;font-size:10px;color:#888;text-align:center}
+                @media print{body{padding:20px 30px}.meta{background:#f8f7f4;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+              </style></head><body>
+              <div class="header">
+                <div><div class="logo">FELT <span>ENGENHARIA</span></div><div class="subtitle">Relatório Diário de Obra</div></div>
+                <div style="text-align:right"><div style="font-size:11px;color:#888">Data</div><div style="font-size:18px;font-weight:800">${fmtD(r.data)}</div></div>
+              </div>
+              <h1>${ob?.nome||"—"}</h1>
+              <div class="meta">
+                <div class="meta-item"><div class="meta-label">Clima</div>${r.clima||"—"}</div>
+                <div class="meta-item"><div class="meta-label">Equipe</div>${r.equipePres||"—"}</div>
+                <div class="meta-item"><div class="meta-label">Materiais recebidos</div>${r.materiaisRecebidos||"Nenhum"}</div>
+              </div>
+              <div class="section"><div class="section-title">Atividades Executadas</div><div class="section-body">${(r.atividades||"").replace(/\n/g,"<br>")}</div></div>
+              ${r.ocorrencias?`<div class="section"><div class="section-title">Ocorrências</div><div class="alert">${r.ocorrencias.replace(/\n/g,"<br>")}</div></div>`:""}
+              ${fotos.length>0?`<div class="section"><div class="section-title">Registro Fotográfico (${fotos.length} fotos)</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">${fotos.map((f,i)=>`<div style="text-align:center"><img src="${f}" style="width:100%;max-height:280px;object-fit:cover;border-radius:6px;border:1px solid #ddd" crossorigin="anonymous"/><div style="font-size:10px;color:#888;margin-top:4px">Foto ${i+1}</div></div>`).join("")}</div></div>`:""}
+              <div class="footer">Felt Engenharia · Gestão Premium de Reformas · CREA/CAU · ART registrada<br>Documento gerado em ${new Date().toLocaleString("pt-BR")}</div>
+              </body></html>`);
+              w.document.close();
+              setTimeout(()=>w.print(),500);
+            };
+            return (
+              <div key={r.id} style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <p style={{fontSize:15,fontWeight:800}}>{fmtD(r.data)} — {ob?.nome||"—"}</p>
+                    <div style={{display:"flex",gap:8,marginTop:4}}>
+                      <Badge text={r.clima||"—"} color={C.cyan} size="sm"/>
+                      {fotos.length>0 && <Badge text={`${fotos.length} fotos`} color={C.purple} size="sm"/>}
+                    </div>
+                  </div>
+                  <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 14px"}}>📄 Gerar PDF</button>
+                </div>
+                {r.equipePres && <p style={{fontSize:12,color:C.textMuted,marginBottom:6}}>👷 {r.equipePres}</p>}
+                <p style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:8,whiteSpace:"pre-line"}}>{r.atividades}</p>
+                {r.ocorrencias && <p style={{fontSize:12,color:C.amber,marginBottom:6}}>⚠️ {r.ocorrencias}</p>}
+                {r.materiaisRecebidos && <p style={{fontSize:12,color:C.textDim,marginBottom:6}}>📦 {r.materiaisRecebidos}</p>}
+                {fotos.length > 0 && (
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6,marginTop:10}}>
+                    {fotos.map((f,i)=>(
+                      <a key={i} href={f} target="_blank" rel="noopener noreferrer" style={{
+                        display:"block",borderRadius:8,overflow:"hidden",
+                        border:`1px solid ${C.border}`,aspectRatio:"1",
+                        transition:"all 0.2s"
+                      }} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;e.currentTarget.style.transform="scale(1.05)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="scale(1)";}}>
+                        <img src={f} alt={`Foto ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover"}} loading="lazy"/>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {rdosSort.length === 0 && (
+            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"40px",textAlign:"center"}}>
+              <p style={{color:C.textDim,fontSize:13}}>Nenhum RDO registrado. Clique em "＋ Novo RDO" para começar.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ── COMPRAS (item 7) ──
+  const ComprasPage = () => {
+    const comprasSort = [...compras].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+    const totalCompras = compras.reduce((s,c)=>s+(c.valorTotal||0),0);
+    const fornecedores = [...new Set(compras.map(c=>c.fornecedor).filter(Boolean))];
+
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+          <div>
+            <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>🛒 Compras</h2>
+            <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{compras.length} compras · {fornecedores.length} fornecedores · {R$(totalCompras)}</p>
+          </div>
+          {canEdit && <button onClick={()=>setModal({type:"compraForm"})} style={btnPrimary}>＋ Registrar Compra</button>}
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:20}}>
+          <MetricCard small label="Total Compras" value={R$(totalCompras)} color={C.amber}/>
+          <MetricCard small label="Fornecedores" value={fornecedores.length+""} color={C.accent}/>
+          <MetricCard small label="Ticket Médio" value={compras.length?R$(totalCompras/compras.length):"—"} color={C.purple}/>
+        </div>
+
+        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
               <thead><tr>
-                <TH>Centro</TH>
-                {obras.map(o=><TH key={o.id} align="right"><span style={{fontSize:10}}>{o.nome.replace("OBRA ","")}</span></TH>)}
-                <TH align="right">TOTAL</TH>
+                <TH>Data</TH><TH>Item</TH><TH>Fornecedor</TH><TH>Obra</TH><TH align="right">Qtd</TH><TH align="right">V.Unit</TH><TH align="right">Total</TH><TH>NF</TH>
+                {isAdmin && <TH></TH>}
               </tr></thead>
               <tbody>
-                {allCCs.map(cc=>{
-                  const vals = obras.map(o=>obraLancs(o.id).filter(l=>l.centroCusto===cc).reduce((s,l)=>s+(l.valor||0),0));
-                  const tot = vals.reduce((s,v)=>s+v,0);
-                  if (tot === 0) return null;
+                {comprasSort.map(c=>{
+                  const ob = obras.find(o=>o.id===c.obraId);
                   return (
-                    <tr key={cc}>
-                      <TD><Badge text={cc} color={C.purple} size="sm"/></TD>
-                      {vals.map((v,i)=><TD key={i} mono align="right" color={v>0?C.text:C.textDim}>{v>0?R$(v):"—"}</TD>)}
-                      <TD mono bold align="right" color={C.gold}>{R$(tot)}</TD>
+                    <tr key={c.id}>
+                      <TD>{fmtD(c.data)}</TD>
+                      <TD bold>{c.item}</TD>
+                      <TD color={C.textMuted}>{c.fornecedor||"—"}</TD>
+                      <TD><Badge text={ob?.nome?.replace("OBRA ","")||"Geral"} color={C.cyan} size="sm"/></TD>
+                      <TD mono align="right">{c.quantidade} {c.unidade}</TD>
+                      <TD mono align="right">{R$(c.valorUnitario)}</TD>
+                      <TD mono bold align="right" color={C.amber}>{R$(c.valorTotal)}</TD>
+                      <TD color={C.textDim}>{c.nfFornecedor||"—"}</TD>
+                      {isAdmin && <TD><button onClick={()=>fbDelCompra(c.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button></TD>}
                     </tr>
                   );
                 })}
@@ -2785,148 +3560,56 @@ function App() {
             </table>
           </div>
         </div>
-
-        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px"}}>
-          <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Proporção M.O. no Contrato</p>
-          {moRatioObras.filter(o=>!o.semDadosReais).map(o=>(
-            <div key={o.id} style={{marginBottom:14}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{fontSize:12,fontWeight:700}}>{o.nome}</span>
-                <span style={{fontSize:12,fontFamily:"'JetBrains Mono',monospace"}}>{R$(o.moVal)} · <b style={{color:o.moRatio>0.4?C.red:o.moRatio>0.3?C.amber:C.green}}>{pct(o.moRatio)}</b></span>
-              </div>
-              <ProgressBar value={o.moRatio} max={0.6} color={o.moRatio>0.4?C.red:o.moRatio>0.3?C.amber:C.green} height={6}/>
-            </div>
-          ))}
-        </div>
       </div>
     );
   };
 
-  // ── PORTAIS DOS CLIENTES (admin) ──
-  const PortaisPage = () => {
-    const clientesComPortal = clientes.filter(c => c.portalToken);
-    const [copied,setCopied] = useState(null);
-    const copyLink = (token,id) => {
-      const link = `${window.location.origin}${window.location.pathname}?portal=${token}`;
-      navigator.clipboard.writeText(link);
-      setCopied(id);
-      showToast("Link copiado!");
-      setTimeout(()=>setCopied(null),1500);
-    };
-
-    return (
-      <div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
-          <div>
-            <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>🔑 Portais dos Clientes</h2>
-            <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{clientesComPortal.length} clientes com portal ativo · {aditivos.length} aditivos no sistema</p>
-          </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button onClick={()=>setModal({type:"docForm"})} style={btnGhost}>📎 Publicar Documento</button>
-            <button onClick={()=>setModal({type:"aditivoForm"})} style={btnPrimary}>＋ Propor Aditivo</button>
-          </div>
+  // ── MEDIÇÕES (item 5) ──
+  const MedicoesPage = () => (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+        <div>
+          <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>📐 Medições</h2>
+          <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{medicoes.length} medições registradas</p>
         </div>
-
-        <div style={{background:C.gold+"08",borderRadius:14,border:`1px solid ${C.gold}33`,padding:"14px 20px",marginBottom:20}}>
-          <p style={{fontSize:12,fontWeight:700,color:C.gold,marginBottom:6}}>🎁 Como funciona o portal</p>
-          <p style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>Cada cliente recebe um link exclusivo que dá acesso completo à sua obra: cronograma de pagamentos, timeline de eventos, custos aplicados, NFs emitidas e aditivos para aprovação. O portal é acessado via <code style={{background:C.bg,padding:"2px 6px",borderRadius:4,color:C.gold}}>{window.location.origin}{window.location.pathname}?portal=TOKEN</code></p>
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14,marginBottom:24}}>
-          {clientesComPortal.map(c=>{
-            const ads = aditivos.filter(a=>a.cliente===c.nome);
-            const adsPend = ads.filter(a=>a.status==="pendente").length;
-            return (
-              <div key={c.id} style={{
-                background: C.surface,
-                borderRadius: 16,
-                border: `1px solid ${C.border}`,
-                padding: "20px 22px",
-                borderTop: `3px solid ${C.gold}`
-              }}>
-                <p style={{fontSize:15,fontWeight:800,letterSpacing:-0.3,marginBottom:8}}>{c.nome}</p>
-                <p style={{fontSize:11,color:C.textDim,marginBottom:12,fontFamily:"'JetBrains Mono',monospace"}}>Token: {c.portalToken}</p>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-                  <div>
-                    <span style={{fontSize:10,color:C.textDim}}>CONTRATO</span>
-                    <p style={{fontWeight:700,fontSize:13,marginTop:2,fontFamily:"'JetBrains Mono',monospace"}}>{R$(c.contrato)}</p>
-                  </div>
-                  <div>
-                    <span style={{fontSize:10,color:C.textDim}}>ADITIVOS</span>
-                    <p style={{fontWeight:700,fontSize:13,marginTop:2}}>{ads.length} {adsPend>0 && <span style={{color:C.amber,fontSize:10}}>({adsPend} pend.)</span>}</p>
-                  </div>
-                </div>
-                <button onClick={()=>copyLink(c.portalToken,c.id)} style={{
-                  ...btnGhost,
-                  width:"100%",
-                  justifyContent:"center",
-                  borderColor: copied===c.id ? C.green : C.gold+"44",
-                  color: copied===c.id ? C.green : C.gold
-                }}>{copied===c.id ? "✓ Copiado!" : "📋 Copiar link do portal"}</button>
-              </div>
-            );
-          })}
-        </div>
-
-        {aditivos.length > 0 && (
-          <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-            <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`}}>
-              <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2}}>Aditivos Registrados</p>
-            </div>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>
-                  <TH>Data</TH><TH>Cliente</TH><TH>Descrição</TH><TH align="right">Valor</TH><TH>Status</TH>
-                </tr></thead>
-                <tbody>
-                  {aditivos.sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(a=>(
-                    <tr key={a.id}>
-                      <TD>{fmtD(a.data)}</TD>
-                      <TD bold>{a.cliente}</TD>
-                      <TD color={C.textMuted}>{a.descricao}</TD>
-                      <TD mono bold align="right">{R$(a.valor)}</TD>
-                      <TD><Badge text={a.status} color={a.status==="aprovado"?C.green:a.status==="recusado"?C.red:C.amber} size="sm"/></TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* DOCUMENTOS PUBLICADOS */}
-        {(() => {
-          const allDocs = Object.values(data.documentos || {});
-          return allDocs.length > 0 && (
-            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",marginTop:16}}>
-              <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`}}>
-                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2}}>Documentos Publicados nos Portais</p>
-              </div>
-              <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr>
-                    <TH>Cliente</TH><TH>Tipo</TH><TH>Título</TH><TH>Link</TH>
-                    {isAdmin && <TH></TH>}
-                  </tr></thead>
-                  <tbody>
-                    {allDocs.sort((a,b)=>(a.cliente||"").localeCompare(b.cliente||"")).map(d=>(
-                      <tr key={d.id}>
-                        <TD bold>{d.cliente}</TD>
-                        <TD><Badge text={d.tipo} color={C.cyan} size="sm"/></TD>
-                        <TD>{d.titulo}</TD>
-                        <TD><a href={d.url} target="_blank" rel="noopener noreferrer" style={{color:C.gold,fontSize:12,textDecoration:"none"}}>📎 Abrir →</a></TD>
-                        {isAdmin && <TD><button onClick={()=>fbDelDoc(d.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button></TD>}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })()}
+        {isAdmin && <button onClick={()=>setModal({type:"medicaoForm"})} style={btnPrimary}>＋ Nova Medição</button>}
       </div>
-    );
-  };
+
+      <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <TH>#</TH><TH>Data</TH><TH>Obra</TH><TH>Cliente</TH><TH align="right">%</TH><TH align="right">Valor</TH><TH>Descrição</TH>
+            </tr></thead>
+            <tbody>
+              {[...medicoes].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(m=>{
+                const ob = obras.find(o=>o.id===m.obraId);
+                return (
+                  <tr key={m.id}>
+                    <TD bold color={C.accent}>#{m.numero}</TD>
+                    <TD>{fmtD(m.data)}</TD>
+                    <TD bold>{ob?.nome||"—"}</TD>
+                    <TD color={C.textMuted}>{m.cliente}</TD>
+                    <TD mono bold align="right" color={C.green}>{m.percentual}%</TD>
+                    <TD mono bold align="right">{R$(m.valorMedicao)}</TD>
+                    <TD color={C.textDim}>{m.descricao||"—"}</TD>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {medicoes.length === 0 && (
+        <div style={{textAlign:"center",padding:"40px 0",color:C.textDim}}>
+          <p>Nenhuma medição registrada. Medições geram cobranças automaticamente.</p>
+        </div>
+      )}
+    </div>
+  );
+
+  // ══════════════════════════════════════════════════════════════
+  // RENDER PAGE SWITCH — ATUALIZADO COM NOVOS MÓDULOS
   // ══════════════════════════════════════════════════════════════
   const renderPage = () => {
     switch(page) {
@@ -2939,108 +3622,178 @@ function App() {
       case "kpis": return <KPIsPage/>;
       case "portais": return <PortaisPage/>;
       case "historico": return <HistoricoPage/>;
+      case "tesouraria": return <TesourariaPage/>;
+      case "rdo": return <RdoPage/>;
+      case "compras": return <ComprasPage/>;
+      case "medicoes": return <MedicoesPage/>;
       default: return <DashPage/>;
     }
   };
 
   // ══════════════════════════════════════════════════════════════
-  // MAIN LAYOUT
+  // NAVEGAÇÃO ATUALIZADA
   // ══════════════════════════════════════════════════════════════
+  const navItems = isDiarista
+    ? [{id:"funcionarios",label:"Equipe",emoji:"👷"}]
+    : isEstagiario
+    ? [
+        {id:"obras",label:"Obras",emoji:"🏗️"},
+        {id:"rdo",label:"RDO",emoji:"📋"},
+        {id:"compras",label:"Compras",emoji:"🛒"},
+        {id:"funcionarios",label:"Equipe",emoji:"👷"},
+        {id:"operacional",label:"Operacional",emoji:"⛽"},
+      ]
+    : [
+        {id:"dashboard",label:"Dashboard",emoji:"📊"},
+        {id:"obras",label:"Obras",emoji:"🏗️"},
+        {id:"faturamento",label:"Faturamento",emoji:"💰"},
+        {id:"tesouraria",label:"Tesouraria",emoji:"🏦"},
+        {id:"medicoes",label:"Medições",emoji:"📐"},
+        {id:"compras",label:"Compras",emoji:"🛒"},
+        {id:"funcionarios",label:"Equipe",emoji:"👷"},
+        {id:"rdo",label:"RDO",emoji:"📋"},
+        {id:"operacional",label:"Operacional",emoji:"⛽"},
+        {id:"administrativo",label:"Admin",emoji:"💼"},
+        {id:"kpis",label:"KPIs",emoji:"🎯"},
+        {id:"portais",label:"Portais",emoji:"🔑"},
+        {id:"historico",label:"Histórico",emoji:"📝"}
+      ];
+
+  // ══════════════════════════════════════════════════════════════
+  // MAIN LAYOUT — RESPONSIVO (item 8)
+  // ══════════════════════════════════════════════════════════════
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+
   return (
-    <div style={{display:"flex",minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'SF Pro Display','Inter',system-ui,sans-serif"}}>
+    <div style={{display:"flex",flexDirection:isMobile?"column":"row",minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'SF Pro Display','Inter',system-ui,sans-serif"}}>
 
-      {/* SIDEBAR */}
-      <aside style={{
-        width: sideCollapsed ? 72 : 248,
-        background: `linear-gradient(180deg,${C.surface},${C.surfaceAlt})`,
-        borderRight: `1px solid ${C.border}`,
-        padding: "24px 14px",
-        display: "flex",
-        flexDirection: "column",
-        transition: "width 0.3s cubic-bezier(.4,0,.2,1)",
-        position: "sticky",
-        top: 0,
-        height: "100vh",
-        overflowY: "auto"
-      }}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:32,padding:"0 6px"}}>
-          <div style={{
-            width:38,height:38,borderRadius:10,
-            background:`linear-gradient(135deg,${C.navy},${C.navyLight})`,
-            display:"flex",alignItems:"center",justifyContent:"center",
-            fontSize:14,fontWeight:900,color:C.gold,letterSpacing:-1,
-            border:`1px solid ${C.gold}44`,
-            flexShrink:0
-          }}>FE</div>
-          {!sideCollapsed && (
-            <div>
-              <p style={{fontSize:13,fontWeight:800,letterSpacing:-0.3}}>Felt</p>
-              <p style={{fontSize:9,color:C.textDim,letterSpacing:1,textTransform:"uppercase"}}>Engenharia</p>
+      {/* SIDEBAR — desktop */}
+      {!isMobile && (
+        <aside style={{
+          width: sideCollapsed ? 72 : 248,
+          background: `linear-gradient(180deg,${C.surface},${C.surfaceAlt})`,
+          borderRight: `1px solid ${C.border}`,
+          padding: "24px 14px",
+          display: "flex",
+          flexDirection: "column",
+          transition: "width 0.3s cubic-bezier(.4,0,.2,1)",
+          position: "sticky",
+          top: 0,
+          height: "100vh",
+          overflowY: "auto"
+        }}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:32,padding:"0 6px"}}>
+            <div style={{
+              width:38,height:38,borderRadius:10,
+              background:`linear-gradient(135deg,${C.navy},${C.navyLight})`,
+              display:"flex",alignItems:"center",justifyContent:"center",
+              border:`1px solid ${C.gold}44`,
+              flexShrink:0
+            }}><FeltLogo size={26}/></div>
+            {!sideCollapsed && (
+              <div>
+                <p style={{fontSize:13,fontWeight:800,letterSpacing:-0.3}}>Felt</p>
+                <p style={{fontSize:9,color:C.textDim,letterSpacing:1,textTransform:"uppercase"}}>Engenharia</p>
+              </div>
+            )}
+          </div>
+
+          <nav style={{flex:1,display:"flex",flexDirection:"column",gap:3,overflowY:"auto"}}>
+            {navItems.map(item=>(
+              <button key={item.id} onClick={()=>setPage(item.id)} style={{
+                display:"flex",alignItems:"center",gap:12,
+                padding:sideCollapsed?"11px 0":"11px 14px",borderRadius:10,border:"none",
+                background:page===item.id?C.accentGlow:"transparent",
+                color:page===item.id?C.accent:C.textMuted,cursor:"pointer",fontSize:13,
+                fontWeight:page===item.id?700:500,textAlign:"left",transition:"all 0.2s",
+                justifyContent:sideCollapsed?"center":"flex-start",
+                borderLeft:page===item.id&&!sideCollapsed?`3px solid ${C.accent}`:"3px solid transparent"
+              }} onMouseEnter={e=>{if(page!==item.id)e.currentTarget.style.color=C.text;}} onMouseLeave={e=>{if(page!==item.id)e.currentTarget.style.color=C.textMuted;}}>
+                <span style={{fontSize:15}}>{item.emoji}</span>
+                {!sideCollapsed && <span>{item.label}</span>}
+              </button>
+            ))}
+          </nav>
+
+          <div style={{paddingTop:16,borderTop:`1px solid ${C.border}`}}>
+            {!sideCollapsed ? (
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 8px"}}>
+                <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${C.gold},${C.accentDark})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:"#000"}}>{user.avatar}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <p style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.nome}</p>
+                  <p style={{fontSize:10,color:C.textDim,textTransform:"uppercase",letterSpacing:0.8}}>{user.role}</p>
+                </div>
+                <button onClick={()=>setUser(null)} title="Sair" style={{background:"none",border:"none",cursor:"pointer",color:C.textDim,fontSize:16,padding:6}}>↗</button>
+              </div>
+            ) : (
+              <button onClick={()=>setUser(null)} title="Sair" style={{background:"none",border:"none",cursor:"pointer",color:C.textDim,fontSize:16,padding:"10px 0",width:"100%"}}>↗</button>
+            )}
+            {isAdmin && !sideCollapsed && (
+              <button onClick={()=>{
+                const backup = JSON.stringify(data, null, 2);
+                const blob = new Blob([backup], {type:"application/json"});
+                const url2 = URL.createObjectURL(blob);
+                const a2 = document.createElement("a");
+                a2.href = url2; a2.download = `felt-erp-backup-${new Date().toISOString().slice(0,10)}.json`;
+                a2.click(); URL.revokeObjectURL(url2);
+                set(ref(fdb,`backups/${new Date().toISOString().slice(0,10)}`),{timestamp:new Date().toISOString(),usuario:user.nome,dados:data});
+                showToast("Backup salvo e exportado");
+              }} style={{width:"100%",background:C.bg,border:`1px solid ${C.gold}33`,color:C.gold,padding:"8px 0",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:600,marginTop:6}}>💾 Exportar Backup</button>
+            )}
+            <button onClick={()=>setSideCollapsed(!sideCollapsed)} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"6px 0",borderRadius:8,cursor:"pointer",fontSize:14,marginTop:8}}>{sideCollapsed?"→":"←"}</button>
+          </div>
+        </aside>
+      )}
+
+      {/* MOBILE NAV — bottom tabs (item 8) */}
+      {isMobile && (
+        <div style={{
+          position:"fixed",top:0,left:0,right:0,zIndex:100,
+          background:`linear-gradient(180deg,${C.surface},${C.surfaceAlt})`,
+          borderBottom:`1px solid ${C.border}`,
+          padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"
+        }}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${C.navy},${C.navyLight})`,display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${C.gold}44`}}>
+              <FeltLogo size={20}/>
             </div>
-          )}
+            <span style={{fontSize:14,fontWeight:800}}>Felt ERP</span>
+          </div>
+          <button onClick={()=>setMobileNav(!mobileNav)} style={{background:"none",border:"none",color:C.textMuted,fontSize:22,cursor:"pointer"}}>{mobileNav?"✕":"☰"}</button>
         </div>
-
-        <nav style={{flex:1,display:"flex",flexDirection:"column",gap:3}}>
-          {visibleNav.map(item=>(
-            <button key={item.id} onClick={()=>setPage(item.id)} style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: sideCollapsed ? "11px 0" : "11px 14px",
-              borderRadius: 10,
-              border: "none",
-              background: page===item.id ? C.accentGlow : "transparent",
-              color: page===item.id ? C.accent : C.textMuted,
-              cursor: "pointer",
-              fontSize: 13,
-              fontWeight: page===item.id ? 700 : 500,
-              textAlign: "left",
-              transition: "all 0.2s",
-              justifyContent: sideCollapsed ? "center" : "flex-start",
-              borderLeft: page===item.id && !sideCollapsed ? `3px solid ${C.accent}` : "3px solid transparent"
-            }} onMouseEnter={e=>{if(page!==item.id) e.currentTarget.style.color=C.text;}} onMouseLeave={e=>{if(page!==item.id) e.currentTarget.style.color=C.textMuted;}}>
-              <span style={{fontSize:15}}>{item.emoji}</span>
-              {!sideCollapsed && <span>{item.label}</span>}
+      )}
+      {isMobile && mobileNav && (
+        <div style={{position:"fixed",top:56,left:0,right:0,bottom:0,zIndex:99,background:C.surface+"f5",backdropFilter:"blur(12px)",padding:"16px",overflowY:"auto"}} onClick={()=>setMobileNav(false)}>
+          {navItems.map(item=>(
+            <button key={item.id} onClick={()=>{setPage(item.id);setMobileNav(false);}} style={{
+              display:"flex",alignItems:"center",gap:12,width:"100%",padding:"14px 16px",borderRadius:12,border:"none",
+              background:page===item.id?C.accentGlow:"transparent",color:page===item.id?C.accent:C.textMuted,
+              cursor:"pointer",fontSize:15,fontWeight:page===item.id?700:500,textAlign:"left",marginBottom:4
+            }}>
+              <span style={{fontSize:18}}>{item.emoji}</span><span>{item.label}</span>
             </button>
           ))}
-        </nav>
-
-        <div style={{paddingTop:16,borderTop:`1px solid ${C.border}`}}>
-          {!sideCollapsed ? (
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 8px"}}>
-              <div style={{
-                width:34,height:34,borderRadius:10,
-                background:`linear-gradient(135deg,${C.gold},${C.accentDark})`,
-                display:"flex",alignItems:"center",justifyContent:"center",
-                fontSize:12,fontWeight:900,color:"#000"
-              }}>{user.avatar}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <p style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.nome}</p>
-                <p style={{fontSize:10,color:C.textDim,textTransform:"uppercase",letterSpacing:0.8}}>{user.role}</p>
-              </div>
-              <button onClick={()=>setUser(null)} title="Sair" style={{background:"none",border:"none",cursor:"pointer",color:C.textDim,fontSize:16,padding:6}}>↗</button>
-            </div>
-          ) : (
-            <button onClick={()=>setUser(null)} title="Sair" style={{background:"none",border:"none",cursor:"pointer",color:C.textDim,fontSize:16,padding:"10px 0",width:"100%"}}>↗</button>
-          )}
-          <button onClick={()=>setSideCollapsed(!sideCollapsed)} style={{
-            width:"100%",
-            background:"none",
-            border:`1px solid ${C.border}`,
-            color:C.textDim,
-            padding:"6px 0",
-            borderRadius:8,
-            cursor:"pointer",
-            fontSize:14,
-            marginTop:8
-          }}>{sideCollapsed ? "→" : "←"}</button>
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:12,paddingTop:12}}>
+            <button onClick={()=>setUser(null)} style={{...btnGhost,width:"100%",justifyContent:"center"}}>↗ Sair</button>
+          </div>
         </div>
-      </aside>
+      )}
 
       {/* MAIN */}
-      <main style={{flex:1,padding:"36px 44px",overflow:"auto",minWidth:0}}>
+      <main style={{flex:1,padding:isMobile?"72px 16px 24px":"36px 44px",overflow:"auto",minWidth:0}}>
         {renderPage()}
       </main>
+
+      {/* FAB — Lançamento Rápido (item 8 mobile) */}
+      {isMobile && canEdit && (
+        <button onClick={()=>setModal({type:"lancForm",tipo:"obra"})} style={{
+          position:"fixed",bottom:24,right:24,zIndex:100,
+          width:56,height:56,borderRadius:28,border:"none",
+          background:`linear-gradient(135deg,${C.gold},${C.accentDark})`,
+          color:"#000",fontSize:24,fontWeight:900,cursor:"pointer",
+          boxShadow:`0 8px 24px ${C.gold}44`,display:"flex",alignItems:"center",justifyContent:"center"
+        }}>＋</button>
+      )}
 
       {/* MODALS */}
       {modal?.type === "lancForm" && <LancForm tipo={modal.tipo} onClose={()=>setModal(null)}/>}
@@ -3053,24 +3806,20 @@ function App() {
       {modal?.type === "staffForm" && <StaffForm onClose={()=>setModal(null)}/>}
       {modal?.type === "staffEdit" && <StaffForm initial={modal.staff} onClose={()=>setModal(null)}/>}
       {modal?.type === "aditivoForm" && <AditivoForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "aditivoEdit" && <AditivoEditForm initial={modal.aditivo} onClose={()=>setModal(null)}/>}
       {modal?.type === "docForm" && <DocForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "portalForm" && <PortalForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "rdoForm" && <RdoForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "compraForm" && <CompraForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "medicaoForm" && <MedicaoForm onClose={()=>setModal(null)}/>}
 
       {/* TOAST */}
       {toast && (
         <div style={{
-          position:"fixed",
-          bottom:30,
-          right:30,
+          position:"fixed",bottom:isMobile?90:30,right:isMobile?16:30,
           background:`linear-gradient(135deg,${C.surface},${C.surfaceAlt})`,
-          border:`1px solid ${C.gold}44`,
-          color:C.text,
-          padding:"14px 22px",
-          borderRadius:12,
-          fontSize:13,
-          fontWeight:600,
-          boxShadow:`0 16px 40px rgba(0,0,0,0.5), 0 0 0 1px ${C.gold}22`,
-          zIndex:300,
-          animation:"slideUp 0.3s ease"
+          border:`1px solid ${C.gold}44`,color:C.text,padding:"14px 22px",borderRadius:12,
+          fontSize:13,fontWeight:600,boxShadow:`0 16px 40px rgba(0,0,0,0.5)`,zIndex:300,animation:"slideUp 0.3s ease"
         }}>{toast}</div>
       )}
     </div>
@@ -3097,10 +3846,13 @@ if (!document.getElementById("felt-erp-global-css")) {
     input:focus, select:focus, textarea:focus { border-color: #c9a84c !important; box-shadow: 0 0 0 3px rgba(201,168,76,0.12) !important; }
     button:hover { filter: brightness(1.08); }
     table { font-variant-numeric: tabular-nums; }
+    @media (max-width: 768px) {
+      .side-desktop { display: none !important; }
+      main { padding: 72px 16px 80px !important; }
+    }
   `;
   document.head.appendChild(style);
 }
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App/>);
-
