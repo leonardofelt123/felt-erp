@@ -3317,6 +3317,187 @@ function App() {
   };
 
   // ══════════════════════════════════════════════════════════════
+  // PAGES RECUPERADAS (KPIs + Portais)
+  // ══════════════════════════════════════════════════════════════
+
+  // ── KPIs RECONSTRUÍDA ──
+  const KPIsPage = () => {
+    const allCCs = [...new Set(lancs.filter(l=>l.tipo==="obra").map(l=>l.centroCusto))].sort();
+    return (
+      <div>
+        <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1,marginBottom:24}}>🎯 KPIs Avançados</h2>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
+          <MetricCard small label="Inadimplência" value={pct(inadimplencia)} color={inadimplencia>0.15?C.red:inadimplencia>0.05?C.amber:C.green} sub={R$(totalVencido) + " em atraso"}/>
+          <MetricCard small label="Concentração TOP 3" value={pct(concentracao)} color={concentracao>0.4?C.red:concentracao>0.25?C.amber:C.green} sub={"de " + clientes.length + " clientes"}/>
+          <MetricCard small label="Obras em Risco" value={obrasRisco.length + ""} color={obrasRisco.length>0?C.red:C.green} sub="execução>60% + margem<20%"/>
+          <MetricCard small label="Burn Rate" value={R$(burnRate)} color={C.amber} sub="média despesa/mês"/>
+        </div>
+        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px",marginBottom:20}}>
+          <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Rentabilidade & Execução por Obra</p>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <TH>Obra</TH><TH align="right">Contrato</TH><TH align="right">Custo</TH><TH align="right">Lucro</TH><TH align="right">Margem</TH><TH align="right">Execução</TH><TH>Estado</TH>
+              </tr></thead>
+              <tbody>
+                {obraKPIs.map(o=>(
+                  <tr key={o.id} style={{opacity:o.semDadosReais?0.6:1}}>
+                    <TD bold>{o.nome}</TD>
+                    <TD mono align="right">{R$(o.contrato)}</TD>
+                    <TD mono align="right" color={C.amber}>{R$(o.custo)}</TD>
+                    <TD mono bold align="right" color={o.lucroBruto>=0?C.green:C.red}>{R$(o.lucroBruto)}</TD>
+                    <TD mono bold align="right" color={o.margem>=0.25?C.green:o.margem>=0.1?C.amber:C.red}>{o.semDadosReais?"—":pct(o.margem)}</TD>
+                    <TD mono align="right">{pct(o.execucao)}</TD>
+                    <TD>{o.semDadosReais?<Badge text="AGUARDANDO" color={C.amber} size="sm"/>:o.margem>=0.25?<Badge text="ÓTIMA" color={C.green} size="sm"/>:<Badge text="NORMAL" color={C.cyan} size="sm"/>}</TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"24px 28px"}}>
+          <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Matriz Centro de Custo × Obra</p>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <TH>Centro</TH>
+                {obras.map(o=><TH key={o.id} align="right"><span style={{fontSize:10}}>{o.nome.replace("OBRA ","")}</span></TH>)}
+                <TH align="right">TOTAL</TH>
+              </tr></thead>
+              <tbody>
+                {allCCs.map(cc=>{
+                  const vals = obras.map(o=>obraLancs(o.id).filter(l=>l.centroCusto===cc).reduce((s,l)=>s+(l.valor||0),0));
+                  const tot = vals.reduce((s,v)=>s+v,0);
+                  if(tot===0) return null;
+                  return (
+                    <tr key={cc}>
+                      <TD><Badge text={cc} color={C.purple} size="sm"/></TD>
+                      {vals.map((v,i)=><TD key={i} mono align="right" color={v>0?C.text:C.textDim}>{v>0?R$(v):"—"}</TD>)}
+                      <TD mono bold align="right" color={C.gold}>{R$(tot)}</TD>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── PORTAIS DOS CLIENTES (admin) ──
+  const PortaisPage = () => {
+    const portalNomesSet = new Set(Object.values(PORTAL_TOKENS));
+    const clientesComPortal = clientes.filter(c => c.portalToken || portalNomesSet.has(c.nome));
+    clientesComPortal.forEach(c => {
+      if (!c.portalToken) {
+        const entry = Object.entries(PORTAL_TOKENS).find(([,nome]) => nome === c.nome);
+        if (entry) c.portalToken = entry[0];
+      }
+    });
+    const [copied,setCopied] = useState(null);
+    const copyLink = (token,id) => {
+      const link = `${window.location.origin}${window.location.pathname}?portal=${token}`;
+      navigator.clipboard.writeText(link);
+      setCopied(id);
+      showToast("Link copiado!");
+      setTimeout(()=>setCopied(null),1500);
+    };
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+          <div>
+            <h2 style={{fontSize:28,fontWeight:900,letterSpacing:-1}}>🔑 Portais dos Clientes</h2>
+            <p style={{fontSize:13,color:C.textDim,marginTop:4}}>{clientesComPortal.length} clientes com portal ativo · {aditivos.length} aditivos</p>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>setModal({type:"portalForm"})} style={{...btnGhost,borderColor:C.gold+"44",color:C.gold}}>🔗 Criar Portal</button>
+            <button onClick={()=>setModal({type:"docForm"})} style={btnGhost}>📎 Publicar Documento</button>
+            <button onClick={()=>setModal({type:"aditivoForm"})} style={btnPrimary}>＋ Propor Aditivo</button>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14,marginBottom:24}}>
+          {clientesComPortal.map(c=>{
+            const ads = aditivos.filter(a=>a.cliente===c.nome);
+            const adsPend = ads.filter(a=>a.status==="pendente").length;
+            return (
+              <div key={c.id} style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 22px",borderTop:`3px solid ${C.gold}`}}>
+                <p style={{fontSize:15,fontWeight:800,letterSpacing:-0.3,marginBottom:8}}>{c.nome}</p>
+                <p style={{fontSize:11,color:C.textDim,marginBottom:12,fontFamily:"'JetBrains Mono',monospace"}}>Token: {c.portalToken}</p>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                  <div><span style={{fontSize:10,color:C.textDim}}>CONTRATO</span><p style={{fontWeight:700,fontSize:13,marginTop:2,fontFamily:"'JetBrains Mono',monospace"}}>{R$(c.contrato)}</p></div>
+                  <div><span style={{fontSize:10,color:C.textDim}}>ADITIVOS</span><p style={{fontWeight:700,fontSize:13,marginTop:2}}>{ads.length} {adsPend>0&&<span style={{color:C.amber,fontSize:10}}>({adsPend} pend.)</span>}</p></div>
+                </div>
+                <button onClick={()=>copyLink(c.portalToken,c.id)} style={{...btnGhost,width:"100%",justifyContent:"center",borderColor:copied===c.id?C.green:C.gold+"44",color:copied===c.id?C.green:C.gold}}>{copied===c.id?"✓ Copiado!":"📋 Copiar link do portal"}</button>
+              </div>
+            );
+          })}
+        </div>
+        {aditivos.length > 0 && (
+          <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+            <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`}}>
+              <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2}}>Aditivos Registrados</p>
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <TH>Data</TH><TH>Cliente</TH><TH>Descrição</TH><TH align="right">Valor</TH><TH>Status</TH>
+                  {isAdmin && <TH></TH>}
+                </tr></thead>
+                <tbody>
+                  {aditivos.sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(a=>(
+                    <tr key={a.id}>
+                      <TD>{fmtD(a.data)}</TD>
+                      <TD bold>{a.cliente}</TD>
+                      <TD color={C.textMuted}>{a.descricao}</TD>
+                      <TD mono bold align="right">{R$(a.valor)}</TD>
+                      <TD><Badge text={a.status} color={a.status==="aprovado"?C.green:a.status==="recusado"?C.red:C.amber} size="sm"/></TD>
+                      {isAdmin && (
+                        <TD>
+                          <div style={{display:"flex",gap:4}}>
+                            <button onClick={()=>setModal({type:"aditivoEdit",aditivo:a})} style={{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:14}}>✏️</button>
+                            <button onClick={()=>{if(window.confirm(`Excluir aditivo "${a.descricao}"?`))fbDelAditivo(a.id);}} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button>
+                          </div>
+                        </TD>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        {(() => {
+          const allDocs = Object.values(data.documentos || {});
+          return allDocs.length > 0 && (
+            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",marginTop:16}}>
+              <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`}}>
+                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2}}>Documentos Publicados</p>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr><TH>Cliente</TH><TH>Tipo</TH><TH>Título</TH><TH>Link</TH>{isAdmin&&<TH></TH>}</tr></thead>
+                  <tbody>
+                    {allDocs.map(d=>(
+                      <tr key={d.id}>
+                        <TD bold>{d.cliente}</TD>
+                        <TD><Badge text={d.tipo} color={C.cyan} size="sm"/></TD>
+                        <TD>{d.titulo}</TD>
+                        <TD><a href={d.url} target="_blank" rel="noopener noreferrer" style={{color:C.gold,fontSize:12,textDecoration:"none"}}>📎 Abrir →</a></TD>
+                        {isAdmin&&<TD><button onClick={()=>fbDelDoc(d.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}}>🗑️</button></TD>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════════════════════
   // NOVAS PAGES — MÓDULOS V3
   // ══════════════════════════════════════════════════════════════
 
