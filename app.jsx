@@ -1412,6 +1412,10 @@ function App() {
   const fbAddDiaria = d => { const id = uid(); set(ref(fdb,`diarias/${id}`),{...d,id}); showToast("Diária registrada"); };
   const fbDelDiaria = dId => {
     const key = Object.keys(data.diarias||{}).find(k => data.diarias[k].id === dId || k === dId);
+    if (!key) return;
+    remove(ref(fdb,`diarias/${key}`));
+    showToast("Diária removida");
+  };
 
   // ════════════════════════════════════════════════════════════════
   // NOVOS CRUDs — MÓDULOS DE GESTÃO V3
@@ -1437,9 +1441,8 @@ function App() {
   const fbAddMedicao = m => {
     const id = uid();
     set(ref(fdb,`medicoes/${id}`),{...m,id});
-    // Auto-gerar cobrança correspondente
     if(m.valorMedicao && m.cliente) {
-      fbAddCob({data:m.data,cliente:m.cliente,valor:m.valorMedicao,status:"A VENCER",obs:`Medição #${m.numero} — ${m.percentual}%`});
+      fbAddCob({data:m.data,cliente:m.cliente,valor:m.valorMedicao,status:"A VENCER",obs:"Medição #"+m.numero+" — "+m.percentual+"%"});
     }
     fbLog("Medição registrada",m.cliente+" #"+m.numero);
     showToast("Medição registrada + cobrança gerada");
@@ -1468,10 +1471,6 @@ function App() {
   const compras = Object.values(data.compras||{});
   const medicoes = Object.values(data.medicoes||{});
   const saldoInicial = data.config?.saldoInicial || 0;
-    if (!key) return;
-    remove(ref(fdb,`diarias/${key}`));
-    showToast("Diária removida");
-  };
 
   // Auditoria
   const auditLogs = Object.values(data.auditLog || {}).sort((a,b)=>(b.timestamp||"").localeCompare(a.timestamp||"")).slice(0,50);
