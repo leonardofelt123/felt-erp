@@ -1027,14 +1027,6 @@ function ClientPortal({ token, data }) {
 // ═══════════════════════════ APP ═══════════════════════════════
 // ══════════════════════════════════════════════════════════════════
 function App() {
-  // Debug: contar renders
-  const renderCount = useRef(0);
-  renderCount.current++;
-  if(renderCount.current > 100) {
-    console.error("LOOP INFINITO DETECTADO - " + renderCount.current + " renders");
-    return <div style={{padding:40,color:"red",background:"#060b14",minHeight:"100vh"}}><h1>Loop infinito detectado</h1><p>O sistema detectou um loop de renderização. Verifique o console.</p></div>;
-  }
-  if(renderCount.current > 1) console.log("App render #" + renderCount.current);
   // Detectar se é portal do cliente via URL ?portal=<token>
   const urlParams = new URLSearchParams(window.location.search);
   const portalToken = urlParams.get("portal");
@@ -1055,19 +1047,28 @@ function App() {
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(null),2500); };
 
+  const dataRef = useRef(null);
+
   useEffect(()=>{
     const dbRef = ref(fdb,"/");
+    let migrating = false;
     const unsub = onValue(dbRef, snap => {
       const val = snap.val();
       if (val && val.obras) {
-        setData(val);
-        // Migração: se não tem equipe/diarias, adicionar
-        const hasEquipe = val.equipe && Object.keys(val.equipe).length > 0;
-        if (!hasEquipe) {
+        // Só atualizar state se os dados realmente mudaram
+        const json = JSON.stringify(val);
+        if (dataRef.current !== json) {
+          dataRef.current = json;
+          setData(val);
+        }
+        // Migração: se não tem equipe/diarias, adicionar (uma vez só)
+        if (!migrating && !(val.equipe && Object.keys(val.equipe).length > 0)) {
+          migrating = true;
           const seed = buildSeed();
           update(ref(fdb,"/"), { equipe:seed.equipe, diarias:seed.diarias });
         }
-      } else {
+      } else if (!migrating) {
+        migrating = true;
         const seed = buildSeed();
         set(ref(fdb,"/"), seed).then(()=>setData(seed));
       }
