@@ -1134,12 +1134,12 @@ function App() {
   // ══════════════════════════════════════════════════════════════
   // DADOS COMPUTADOS — CORRIGIDOS
   // ══════════════════════════════════════════════════════════════
-  const obras = Object.values(data.obras || {});
-  const lancs = Object.values(data.lancamentos || {});
+  const obras = Object.values(data.obras || {}).filter(function(o){return o && o.id});
+  const lancs = Object.values(data.lancamentos || {}).filter(function(l){return l && l.id});
   const obraLancs = oid => lancs.filter(l => l.obraId === oid && l.tipo === "obra");
 
-  const staffList = Object.values(data.equipe || {}).filter(e => e.ativo !== false);
-  const diariasList = Object.values(data.diarias || {});
+  const staffList = Object.values(data.equipe || {}).filter(e => e && e.ativo !== false);
+  const diariasList = Object.values(data.diarias || {}).filter(function(d){return d && d.id});
   const mensalistas = staffList.filter(s => s.tipo === "mensalista");
   const diaristas = staffList.filter(s => s.tipo === "diarista");
   const obrasAtivas = obras.filter(o => o.status === "Em andamento");
@@ -3923,21 +3923,26 @@ function App() {
   // RENDER PAGE SWITCH — ATUALIZADO COM NOVOS MÓDULOS
   // ══════════════════════════════════════════════════════════════
   const renderPage = () => {
-    switch(page) {
-      case "dashboard": return <DashPage/>;
-      case "obras": return <ObrasPage/>;
-      case "faturamento": return <FatPage/>;
-      case "funcionarios": return <EquipePage/>;
-      case "operacional": return <LancPage tipo="operacional" titulo="Operacional" emoji="⛽"/>;
-      case "administrativo": return <LancPage tipo="administrativo" titulo="Administrativo" emoji="💼"/>;
-      case "kpis": return <KPIsPage/>;
-      case "portais": return <PortaisPage/>;
-      case "historico": return <HistoricoPage/>;
-      case "tesouraria": return <TesourariaPage/>;
-      case "rdo": return <RdoPage/>;
-      case "compras": return <ComprasPage/>;
-      case "medicoes": return <MedicoesPage/>;
-      default: return <DashPage/>;
+    try {
+      switch(page) {
+        case "dashboard": return <DashPage/>;
+        case "obras": return <ObrasPage/>;
+        case "faturamento": return <FatPage/>;
+        case "funcionarios": return <EquipePage/>;
+        case "operacional": return <LancPage tipo="operacional" titulo="Operacional" emoji="⛽"/>;
+        case "administrativo": return <LancPage tipo="administrativo" titulo="Administrativo" emoji="💼"/>;
+        case "kpis": return <KPIsPage/>;
+        case "portais": return <PortaisPage/>;
+        case "historico": return <HistoricoPage/>;
+        case "tesouraria": return <TesourariaPage/>;
+        case "rdo": return <RdoPage/>;
+        case "compras": return <ComprasPage/>;
+        case "medicoes": return <MedicoesPage/>;
+        default: return <DashPage/>;
+      }
+    } catch(err) {
+      console.error("Erro na página "+page+":", err);
+      return <div style={{padding:40,color:C.red}}><h2>Erro ao renderizar</h2><p style={{color:C.textMuted,marginTop:12}}>{err.message}</p><button onClick={function(){setPage("dashboard")}} style={btnPrimary}>Voltar ao Dashboard</button></div>;
     }
   };
 
