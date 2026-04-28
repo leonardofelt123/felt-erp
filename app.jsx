@@ -2542,12 +2542,38 @@ function App() {
               </div>
             </div>
             {(isAdmin || isEstagiario) && (
-              <div style={{display:"flex",gap:8}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {isAdmin && <button onClick={()=>setModal({type:"obraEdit",obra:o})} style={btnGhost}>✏️ Editar</button>}
                 {isAdmin && <button onClick={()=>{
-                  if(window.confirm(`Tem certeza que deseja excluir "${o.nome}"?\n\nTodos os lançamentos desta obra também serão removidos. Esta ação não pode ser desfeita.`))
+                  if(window.confirm("Tem certeza que deseja excluir \""+o.nome+"\"?\n\nTodos os lançamentos desta obra também serão removidos."))
                     fbDelObra(o.id);
                 }} style={{...btnGhost,borderColor:C.red+"44",color:C.red}}>🗑️ Excluir</button>}
+                <button onClick={function(){
+                  var rdosObra = rdos.filter(function(r){return r.obraId===o.id});
+                  var todasFotos = [];
+                  rdosObra.forEach(function(r){
+                    var fotos = Array.isArray(r.fotos) ? r.fotos.filter(function(x){return x}) : [];
+                    fotos.forEach(function(url,idx){
+                      todasFotos.push({url:url, nome: fmtD(r.data)+"_foto_"+(idx+1)});
+                    });
+                  });
+                  if(todasFotos.length===0){ showToast("Nenhuma foto encontrada nesta obra"); return; }
+                  showToast("Baixando "+todasFotos.length+" fotos...");
+                  todasFotos.forEach(function(f,i){
+                    setTimeout(function(){
+                      var a = document.createElement("a");
+                      a.href = f.url;
+                      a.download = o.nome.replace(/[^a-zA-Z0-9]/g,"_")+"_"+f.nome+".jpg";
+                      a.target = "_blank";
+                      a.rel = "noopener noreferrer";
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    }, i * 500);
+                  });
+                }} style={{...btnGhost,borderColor:C.cyan+"44",color:C.cyan}}>📥 Baixar Fotos ({rdos.filter(function(r){
+                  return r.obraId===o.id && Array.isArray(r.fotos) && r.fotos.filter(function(x){return x}).length>0;
+                }).reduce(function(s,r){return s+(r.fotos||[]).filter(function(x){return x}).length;},0)})</button>
                 <button onClick={()=>setModal({type:"lancForm",tipo:"obra"})} style={btnPrimary}>＋ Lançamento</button>
               </div>
             )}
