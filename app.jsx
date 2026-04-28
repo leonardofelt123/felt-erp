@@ -3528,15 +3528,15 @@ function App() {
 
   // ── PORTAIS DOS CLIENTES (admin) ──
   const PortaisPage = () => {
-    const portalNomesSet = new Set(Object.values(PORTAL_TOKENS));
-    const clientesComPortal = clientes.filter(c => c.portalToken || portalNomesSet.has(c.nome));
-    clientesComPortal.forEach(c => {
-      if (!c.portalToken) {
-        const entry = Object.entries(PORTAL_TOKENS).find(([,nome]) => nome === c.nome);
-        if (entry) c.portalToken = entry[0];
-      }
-    });
     const [copied,setCopied] = useState(null);
+    const portalNomesSet = new Set(Object.values(PORTAL_TOKENS));
+    const clientesComPortal = clientes
+      .filter(c => c.portalToken || portalNomesSet.has(c.nome))
+      .map(function(c) {
+        if (c.portalToken) return c;
+        var entry = Object.entries(PORTAL_TOKENS).find(function(e){ return e[1] === c.nome; });
+        return entry ? Object.assign({}, c, {portalToken: entry[0]}) : c;
+      });
     const copyLink = (token,id) => {
       const link = `${window.location.origin}${window.location.pathname}?portal=${token}`;
       navigator.clipboard.writeText(link);
