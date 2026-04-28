@@ -2525,7 +2525,7 @@ function App() {
   const ObrasPage = () => {
     if (selObra) {
       const o = obraKPIs.find(x => x.id === selObra);
-      if (!o) { setSelObra(null); return null; }
+      if (!o) return null;
       const ls = obraLancs(o.id).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
       const ccBreak = {};
       ls.forEach(l => { ccBreak[l.centroCusto] = (ccBreak[l.centroCusto]||0) + (l.valor||0); });
@@ -4177,3 +4177,4 @@ if (!document.getElementById("felt-erp-global-css")) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App/>);
+
