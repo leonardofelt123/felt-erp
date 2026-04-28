@@ -1027,6 +1027,14 @@ function ClientPortal({ token, data }) {
 // ═══════════════════════════ APP ═══════════════════════════════
 // ══════════════════════════════════════════════════════════════════
 function App() {
+  // Debug: contar renders
+  const renderCount = useRef(0);
+  renderCount.current++;
+  if(renderCount.current > 100) {
+    console.error("LOOP INFINITO DETECTADO - " + renderCount.current + " renders");
+    return <div style={{padding:40,color:"red",background:"#060b14",minHeight:"100vh"}}><h1>Loop infinito detectado</h1><p>O sistema detectou um loop de renderização. Verifique o console.</p></div>;
+  }
+  if(renderCount.current > 1) console.log("App render #" + renderCount.current);
   // Detectar se é portal do cliente via URL ?portal=<token>
   const urlParams = new URLSearchParams(window.location.search);
   const portalToken = urlParams.get("portal");
@@ -3044,7 +3052,7 @@ function App() {
                     {isAdmin && <TH></TH>}
                   </tr></thead>
                   <tbody>
-                    {diariasList.sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(d=>{
+                    {[...diariasList].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(d=>{
                       const s = staffList.find(x=>x.id===d.equipeId);
                       const o = obras.find(x=>x.id===d.obraId);
                       return (
@@ -3406,7 +3414,7 @@ function App() {
                   {isAdmin && <TH></TH>}
                 </tr></thead>
                 <tbody>
-                  {nfsList.sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(n=>(
+                  {[...nfsList].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(n=>(
                     <tr key={n.id}>
                       <TD>{fmtD(n.data)}</TD>
                       <TD bold>{n.cliente}</TD>
@@ -3586,7 +3594,7 @@ function App() {
                   {isAdmin && <TH></TH>}
                 </tr></thead>
                 <tbody>
-                  {aditivos.sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(a=>(
+                  {[...aditivos].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(a=>(
                     <tr key={a.id}>
                       <TD>{fmtD(a.data)}</TD>
                       <TD bold>{a.cliente}</TD>
@@ -3651,7 +3659,7 @@ function App() {
     const movimentos = [];
     cobs.filter(c=>c.status==="RECEBIDO").forEach(c=>movimentos.push({data:c.data,tipo:"entrada",desc:c.cliente,valor:c.valor||0,cat:"Cobrança"}));
     lancs.forEach(l=>movimentos.push({data:l.data,tipo:"saida",desc:l.descricao,valor:l.valor||0,cat:l.centroCusto||l.tipo}));
-    movimentos.sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+    [...movimentos].sort((a,b)=>(a.data||"").localeCompare(b.data||""));
 
     const totalEntradas = movimentos.filter(m=>m.tipo==="entrada").reduce((s,m)=>s+m.valor,0);
     const totalSaidas = movimentos.filter(m=>m.tipo==="saida").reduce((s,m)=>s+m.valor,0);
@@ -4177,4 +4185,3 @@ if (!document.getElementById("felt-erp-global-css")) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App/>);
-
