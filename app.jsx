@@ -16,7 +16,7 @@ const app = initializeApp({
 });
 const fdb = getDatabase(app);
 let storage = null;
-try { storage = getStorage(app); console.log("Firebase Storage OK"); } catch(e) { console.warn("Storage indisponível:", e.message); }
+try { storage = getStorage(app); } catch(e) { console.warn("Firebase Storage não disponível:", e.message); }
 
 
 // ─── CONSTANTS ───
@@ -699,7 +699,6 @@ function ClientPortal({ token, data }) {
             {id:"timeline",label:"📍 Timeline da Obra"},
             {id:"custos",label:"💰 Custos Aplicados"},
             {id:"documentos",label:"📄 Documentos & NFs"},
-            {id:"rdos",label:"📋 RDOs"},
             {id:"aditivos",label:"✍️ Aditivos"}
           ].map(t => (
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
@@ -935,40 +934,6 @@ function ClientPortal({ token, data }) {
           </div>
         )}
 
-        {/* TAB: RDOS */}
-        {tab === "rdos" && (() => {
-          const rdosObra = Object.values(data.rdos || {}).filter(r => r.obraId === (obraMatch ? obraMatch.id : "")).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
-          return (
-            <div>
-              {rdosObra.length === 0 ? (
-                <div style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"40px",textAlign:"center"}}>
-                  <p style={{color:C.textDim,fontSize:13}}>Nenhum RDO registrado para esta obra ainda</p>
-                </div>
-              ) : rdosObra.map(function(r,idx) {
-                var fotosRdo = Array.isArray(r.fotos) ? r.fotos.filter(function(x){return x}) : [];
-                return (
-                  <div key={r.id||idx} style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px",marginBottom:12}}>
-                    <p style={{fontSize:15,fontWeight:800,marginBottom:8}}>{fmtD(r.data)}</p>
-                    {r.equipePres && <p style={{fontSize:12,color:C.textMuted,marginBottom:6}}>Equipe: {r.equipePres}</p>}
-                    <p style={{fontSize:13,lineHeight:1.6,marginBottom:8,whiteSpace:"pre-line"}}>{r.atividades}</p>
-                    {r.ocorrencias && <p style={{fontSize:12,color:C.amber,marginBottom:6}}>Ocorrências: {r.ocorrencias}</p>}
-                    {r.materiaisRecebidos && <p style={{fontSize:12,color:C.textDim,marginBottom:6}}>Materiais: {r.materiaisRecebidos}</p>}
-                    {fotosRdo.length > 0 && (
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:6,marginTop:8}}>
-                        {fotosRdo.map(function(f2,i2){return(
-                          <a key={i2} href={f2} target="_blank" rel="noopener noreferrer" style={{display:"block",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border,aspectRatio:"1"}}>
-                            <img src={f2} style={{width:"100%",height:"100%",objectFit:"cover"}} loading="lazy"/>
-                          </a>
-                        );})}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })()}
-
         {/* TAB: ADITIVOS */}
         {tab === "aditivos" && (
           <div>
@@ -1047,28 +1012,19 @@ function App() {
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(null),2500); };
 
-  const dataRef = useRef(null);
-
   useEffect(()=>{
     const dbRef = ref(fdb,"/");
-    let migrating = false;
     const unsub = onValue(dbRef, snap => {
       const val = snap.val();
       if (val && val.obras) {
-        // Só atualizar state se os dados realmente mudaram
-        const json = JSON.stringify(val);
-        if (dataRef.current !== json) {
-          dataRef.current = json;
-          setData(val);
-        }
-        // Migração: se não tem equipe/diarias, adicionar (uma vez só)
-        if (!migrating && !(val.equipe && Object.keys(val.equipe).length > 0)) {
-          migrating = true;
+        setData(val);
+        // Migração: se não tem equipe/diarias, adicionar
+        const hasEquipe = val.equipe && Object.keys(val.equipe).length > 0;
+        if (!hasEquipe) {
           const seed = buildSeed();
           update(ref(fdb,"/"), { equipe:seed.equipe, diarias:seed.diarias });
         }
-      } else if (!migrating) {
-        migrating = true;
+      } else {
         const seed = buildSeed();
         set(ref(fdb,"/"), seed).then(()=>setData(seed));
       }
@@ -1143,12 +1099,12 @@ function App() {
   // ══════════════════════════════════════════════════════════════
   // DADOS COMPUTADOS — CORRIGIDOS
   // ══════════════════════════════════════════════════════════════
-  const obras = Object.values(data.obras || {}).filter(function(o){return o && o.id});
-  const lancs = Object.values(data.lancamentos || {}).filter(function(l){return l && l.id});
+  const obras = Object.values(data.obras || {});
+  const lancs = Object.values(data.lancamentos || {});
   const obraLancs = oid => lancs.filter(l => l.obraId === oid && l.tipo === "obra");
 
-  const staffList = Object.values(data.equipe || {}).filter(e => e && e.ativo !== false);
-  const diariasList = Object.values(data.diarias || {}).filter(function(d){return d && d.id});
+  const staffList = Object.values(data.equipe || {}).filter(e => e.ativo !== false);
+  const diariasList = Object.values(data.diarias || {});
   const mensalistas = staffList.filter(s => s.tipo === "mensalista");
   const diaristas = staffList.filter(s => s.tipo === "diarista");
   const obrasAtivas = obras.filter(o => o.status === "Em andamento");
@@ -2034,37 +1990,40 @@ function App() {
     };
 
     const uploadAllFotos = async () => {
-      // Ponto 11: fotos organizadas por obra: fotos-obras/NOME-DA-OBRA/2026-04-28/foto-0.jpg
-      const obraNome = (obras.find(o=>o.id===f.obraId)||{}).nome || "obra";
-      const pastaObra = obraNome.replace(/[^a-zA-Z0-9À-ú ]/g,"").replace(/ +/g,"-").toLowerCase();
+      if (!storage) {
+        // Storage não ativado — usar previews locais como base64
+        const results = [];
+        for (const foto of fotos) {
+          try {
+            const base64 = await new Promise((res,rej) => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result);
+              reader.onerror = rej;
+              reader.readAsDataURL(foto.file);
+            });
+            results.push(base64);
+          } catch(e) { results.push(foto.preview); }
+        }
+        return results;
+      }
+      const obraNome = (obras.find(o=>o.id===f.obraId)?.nome||"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
       const results = [];
       for (let i=0; i<fotos.length; i++) {
         const foto = fotos[i];
         if (foto.url) { results.push(foto.url); continue; }
         setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:true} : p));
         try {
-          if (storage) {
-            const ext = (foto.file.name||"foto.jpg").split(".").pop() || "jpg";
-            const path = "fotos-obras/" + pastaObra + "/" + f.data + "/foto-" + i + "-" + Date.now() + "." + ext;
-            const storageRef = sRef(storage, path);
-            await uploadBytes(storageRef, foto.file);
-            const url = await getDownloadURL(storageRef);
-            results.push(url);
-            setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url:url} : p));
-          } else {
-            // Fallback sem Storage: converter para base64
-            const base64 = await new Promise(function(res,rej) {
-              var reader = new FileReader();
-              reader.onload = function() { res(reader.result); };
-              reader.onerror = rej;
-              reader.readAsDataURL(foto.file);
-            });
-            results.push(base64);
-            setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url:base64} : p));
-          }
+          const ext = foto.file.name.split(".").pop() || "jpg";
+          const path = `rdos/${obraNome}/${f.data}/${Date.now()}-${i}.${ext}`;
+          const storageRef = sRef(storage, path);
+          await uploadBytes(storageRef, foto.file);
+          const url = await getDownloadURL(storageRef);
+          results.push(url);
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url} : p));
         } catch(err) {
           console.error("Upload falhou:", err);
-          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:err.message||"Falha"} : p));
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:"Falha"} : p));
+          results.push(foto.preview);
         }
       }
       return results.filter(Boolean);
@@ -2085,7 +2044,7 @@ function App() {
 
     return (
       <Modal title="Registrar RDO" onClose={onClose} wide>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
           <Field label="Obra">
             <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
               {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
@@ -2093,6 +2052,11 @@ function App() {
           </Field>
           <Field label="Data">
             <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
+          </Field>
+          <Field label="Clima">
+            <select value={f.clima} onChange={e=>setF(p=>({...p,clima:e.target.value}))} style={selectStyle}>
+              {["Ensolarado","Nublado","Chuva leve","Chuva forte","Parcialmente nublado"].map(c=><option key={c}>{c}</option>)}
+            </select>
           </Field>
         </div>
         <Field label="Equipe presente">
@@ -2551,38 +2515,12 @@ function App() {
               </div>
             </div>
             {(isAdmin || isEstagiario) && (
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:8}}>
                 {isAdmin && <button onClick={()=>setModal({type:"obraEdit",obra:o})} style={btnGhost}>✏️ Editar</button>}
                 {isAdmin && <button onClick={()=>{
-                  if(window.confirm("Tem certeza que deseja excluir \""+o.nome+"\"?\n\nTodos os lançamentos desta obra também serão removidos."))
+                  if(window.confirm(`Tem certeza que deseja excluir "${o.nome}"?\n\nTodos os lançamentos desta obra também serão removidos. Esta ação não pode ser desfeita.`))
                     fbDelObra(o.id);
                 }} style={{...btnGhost,borderColor:C.red+"44",color:C.red}}>🗑️ Excluir</button>}
-                <button onClick={function(){
-                  var rdosObra = rdos.filter(function(r){return r.obraId===o.id});
-                  var todasFotos = [];
-                  rdosObra.forEach(function(r){
-                    var fotos = Array.isArray(r.fotos) ? r.fotos.filter(function(x){return x}) : [];
-                    fotos.forEach(function(url,idx){
-                      todasFotos.push({url:url, nome: fmtD(r.data)+"_foto_"+(idx+1)});
-                    });
-                  });
-                  if(todasFotos.length===0){ showToast("Nenhuma foto encontrada nesta obra"); return; }
-                  showToast("Baixando "+todasFotos.length+" fotos...");
-                  todasFotos.forEach(function(f,i){
-                    setTimeout(function(){
-                      var a = document.createElement("a");
-                      a.href = f.url;
-                      a.download = o.nome.replace(/[^a-zA-Z0-9]/g,"_")+"_"+f.nome+".jpg";
-                      a.target = "_blank";
-                      a.rel = "noopener noreferrer";
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                    }, i * 500);
-                  });
-                }} style={{...btnGhost,borderColor:C.cyan+"44",color:C.cyan}}>📥 Baixar Fotos ({rdos.filter(function(r){
-                  return r.obraId===o.id && Array.isArray(r.fotos) && r.fotos.filter(function(x){return x}).length>0;
-                }).reduce(function(s,r){return s+(r.fotos||[]).filter(function(x){return x}).length;},0)})</button>
                 <button onClick={()=>setModal({type:"lancForm",tipo:"obra"})} style={btnPrimary}>＋ Lançamento</button>
               </div>
             )}
@@ -2822,55 +2760,7 @@ function App() {
         {/* TAB VISÃO */}
         {eqTab === "visao" && (
           <div>
-            {/* PAGAMENTO MENSAL — pré-lançamento */}
-            {isAdmin && (
-              <div style={{background:C.gold+"08",borderRadius:16,border:"1px solid "+C.gold+"33",padding:"20px 24px",marginBottom:16}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:12}}>
-                  <div>
-                    <p style={{fontSize:11,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:1.2}}>Confirmar Pagamento Mensal</p>
-                    <p style={{fontSize:12,color:C.textMuted,marginTop:4}}>Lança o salário de cada mensalista e rateia entre as obras em andamento</p>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <select id="pag-mes" style={{...selectStyle,padding:"8px 12px",fontSize:12,width:160}}>
-                      {["2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07","2026-08","2026-09","2026-10","2026-11","2026-12"].map(function(m){
-                        var label = ["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][parseInt(m.slice(5))-1];
-                        return <option key={m} value={m}>{label}/{m.slice(0,4)}</option>;
-                      })}
-                    </select>
-                    <button onClick={function(){
-                      var mes = document.getElementById("pag-mes").value;
-                      var label = mes.replace("-","/");
-                      var jaLancado = lancsFuncionario.some(function(l){return l.data && l.data.startsWith(mes)});
-                      if(jaLancado && !window.confirm("Já existem lançamentos de funcionários em "+label+". Deseja lançar novamente?")) return;
-                      var count = 0;
-                      mensalistas.forEach(function(s){
-                        fbAddLanc({
-                          descricao: s.nome+" — "+label,
-                          valor: s.salario||0,
-                          data: mes+"-15",
-                          centroCusto: s.nome.split(" ")[0].toUpperCase(),
-                          obs: "Pagamento mensal "+label,
-                          obraId: "",
-                          tipo: "funcionario"
-                        });
-                        count++;
-                      });
-                      showToast(count+" pagamentos lançados para "+label);
-                    }} style={{...btnPrimary,padding:"9px 16px",fontSize:12}}>✓ Confirmar Pagamento</button>
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {mensalistas.map(function(s){return(
-                    <div key={s.id} style={{background:C.bg,borderRadius:8,padding:"6px 12px",border:"1px solid "+C.border,fontSize:12}}>
-                      <span style={{fontWeight:700}}>{s.nome}</span>
-                      <span style={{color:C.gold,fontFamily:"'JetBrains Mono',monospace",marginLeft:8}}>{R$(s.salario)}</span>
-                    </div>
-                  );})}
-                </div>
-              </div>
-            )}
-
-            <div style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px",marginBottom:16}}>
+            <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
               <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Mensalistas ({mensalistas.length})</p>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
@@ -2996,10 +2886,10 @@ function App() {
         {/* TAB DIÁRIAS */}
         {eqTab === "diarias" && (
           <div>
-            {(isAdmin || isEstagiario) && (
-              <div style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px",marginBottom:16}}>
-                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Registrar Diárias em Lote</p>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+            {isAdmin && (
+              <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
+                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Registrar Diária</p>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:10,alignItems:"flex-end"}}>
                   <div>
                     <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Funcionário</label>
                     <select id="di-func" style={{...inputStyle,padding:"8px 12px",fontSize:12}}>
@@ -3007,41 +2897,22 @@ function App() {
                     </select>
                   </div>
                   <div>
-                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Semana de referência</label>
-                    <input type="date" id="di-semana" defaultValue={new Date().toISOString().slice(0,10)} style={{...inputStyle,padding:"8px 12px",fontSize:12}}/>
+                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Obra</label>
+                    <select id="di-obra" style={{...inputStyle,padding:"8px 12px",fontSize:12}}>
+                      {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+                    </select>
                   </div>
+                  <div>
+                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Data</label>
+                    <input type="date" id="di-data" defaultValue={new Date().toISOString().slice(0,10)} style={{...inputStyle,padding:"8px 12px",fontSize:12}}/>
+                  </div>
+                  <button onClick={()=>{
+                    const eqId = document.getElementById("di-func").value;
+                    const oId = document.getElementById("di-obra").value;
+                    const d = document.getElementById("di-data").value;
+                    if (eqId && oId && d) fbAddDiaria({equipeId:eqId,obraId:oId,data:d});
+                  }} style={{...btnPrimary,padding:"9px 16px",fontSize:12}}>＋ Registrar</button>
                 </div>
-                <p style={{fontSize:10,color:C.textDim,marginBottom:8}}>Selecione a obra para cada dia da semana. Dias sem obra serão ignorados.</p>
-                <div style={{display:"grid",gap:6}} id="di-lote-container">
-                  {["Segunda","Terça","Quarta","Quinta","Sexta","Sábado"].map(function(dia,idx){return(
-                    <div key={dia} style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{fontSize:12,fontWeight:600,width:70,color:C.textMuted}}>{dia}</span>
-                      <select id={"di-obra-"+idx} style={{...inputStyle,padding:"6px 10px",fontSize:11,flex:1}}>
-                        <option value="">— Não trabalhou —</option>
-                        {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
-                      </select>
-                    </div>
-                  );})}
-                </div>
-                <button onClick={function(){
-                  var eqId = document.getElementById("di-func").value;
-                  var semanaRef = document.getElementById("di-semana").value;
-                  if(!eqId || !semanaRef) return;
-                  var baseDate = new Date(semanaRef+"T12:00:00");
-                  var dow = baseDate.getDay();
-                  var mondayOffset = dow === 0 ? -6 : 1 - dow;
-                  var count = 0;
-                  [0,1,2,3,4,5].forEach(function(idx){
-                    var obraId = document.getElementById("di-obra-"+idx).value;
-                    if(!obraId) return;
-                    var d = new Date(baseDate);
-                    d.setDate(baseDate.getDate() + mondayOffset + idx);
-                    var dataStr = d.toISOString().slice(0,10);
-                    fbAddDiaria({equipeId:eqId,obraId:obraId,data:dataStr});
-                    count++;
-                  });
-                  if(count>0) showToast(count+" diárias registradas");
-                }} style={{...btnPrimary,marginTop:12,width:"100%",justifyContent:"center",padding:"10px 0",fontSize:12}}>＋ Registrar Diárias da Semana</button>
               </div>
             )}
 
@@ -3539,13 +3410,11 @@ function App() {
   const PortaisPage = () => {
     const [copied,setCopied] = useState(null);
     const portalNomesSet = new Set(Object.values(PORTAL_TOKENS));
-    const clientesComPortal = clientes
-      .filter(c => c.portalToken || portalNomesSet.has(c.nome))
-      .map(function(c) {
-        if (c.portalToken) return c;
-        var entry = Object.entries(PORTAL_TOKENS).find(function(e){ return e[1] === c.nome; });
-        return entry ? Object.assign({}, c, {portalToken: entry[0]}) : c;
-      });
+    const clientesComPortal = clientes.filter(function(c){return c.portalToken || portalNomesSet.has(c.nome)}).map(function(c){
+      if(c.portalToken) return c;
+      var entry = Object.entries(PORTAL_TOKENS).find(function(e){return e[1]===c.nome});
+      return entry ? Object.assign({},c,{portalToken:entry[0]}) : c;
+    });
     const copyLink = (token,id) => {
       const link = `${window.location.origin}${window.location.pathname}?portal=${token}`;
       navigator.clipboard.writeText(link);
@@ -3660,7 +3529,7 @@ function App() {
     const movimentos = [];
     cobs.filter(c=>c.status==="RECEBIDO").forEach(c=>movimentos.push({data:c.data,tipo:"entrada",desc:c.cliente,valor:c.valor||0,cat:"Cobrança"}));
     lancs.forEach(l=>movimentos.push({data:l.data,tipo:"saida",desc:l.descricao,valor:l.valor||0,cat:l.centroCusto||l.tipo}));
-    [...movimentos].sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+    movimentos.sort((a,b)=>(a.data||"").localeCompare(b.data||""));
 
     const totalEntradas = movimentos.filter(m=>m.tipo==="entrada").reduce((s,m)=>s+m.valor,0);
     const totalSaidas = movimentos.filter(m=>m.tipo==="saida").reduce((s,m)=>s+m.valor,0);
@@ -3759,50 +3628,70 @@ function App() {
         <div style={{display:"grid",gap:12}}>
           {rdosSort.map(r=>{
             const ob = obras.find(o=>o.id===r.obraId);
-            const fotos = Array.isArray(r.fotos) ? r.fotos.filter(function(x){return x}) : [];
+            const fotos = Array.isArray(r.fotos) ? r.fotos.filter(x=>x) : [];
             const rdoNum = rdos.filter(function(x){return x.obraId===r.obraId}).sort(function(a,b){return(a.data||"").localeCompare(b.data||"")}).findIndex(function(x){return x.id===r.id})+1;
+            const diasSemana = ["Domingo","Segunda-Feira","Terça-Feira","Quarta-Feira","Quinta-Feira","Sexta-Feira","Sábado"];
+            const dataObj = new Date(r.data+"T12:00:00");
+            const diaSemana = diasSemana[dataObj.getDay()] || "—";
             const gerarPdf = function() {
-              var obraNome = ob ? ob.nome : "";
+              var obraNome = ob ? ob.nome : "—";
               var dataFmt = fmtD(r.data);
-              var diasSemana = ["Domingo","Segunda-Feira","Ter\u00e7a-Feira","Quarta-Feira","Quinta-Feira","Sexta-Feira","S\u00e1bado"];
-              var dObj = new Date(r.data+"T12:00:00");
-              var diaSem = diasSemana[dObj.getDay()] || "";
-              var ativs = (r.atividades||"").split("\n").filter(function(x){return x.trim()});
-              var h='<!DOCTYPE html><html><head><title>RDO</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;color:#000;padding:20px 30px;max-width:800px;margin:0 auto;font-size:12px}';
-              h+='.ph{display:flex;justify-content:space-between;font-size:10px;margin-bottom:8px}.ap{background:#0B1A3B;color:#fff;padding:3px 12px;font-weight:700;font-size:10px}';
-              h+='.lb{text-align:center;padding:12px;border:1px solid #ccc}.lt{font-size:22px;font-weight:900;letter-spacing:6px;color:#0B1A3B}';
-              h+='h1{font-size:14px;font-weight:700;text-align:center;padding:8px;border:1px solid #ccc;border-top:none}';
-              h+='table{width:100%;border-collapse:collapse}td,th{padding:6px 10px;border:1px solid #ccc;font-size:11px;vertical-align:top}th{background:#f5f5f5;font-weight:700;text-align:left}';
-              h+='.sh{background:#f0f0f0;font-weight:700;padding:6px 10px;border:1px solid #ccc;font-size:11px}';
-              h+='.fg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc}.fc{border:1px solid #ccc;padding:4px;text-align:center}.fc img{width:100%;max-height:320px;object-fit:cover}';
-              h+='.as{display:flex;justify-content:space-between;margin-top:60px}.as div{text-align:center;width:45%}.al{border-top:1px solid #000;padding-top:4px;font-size:11px;margin-top:40px}';
-              h+='@page{margin:15mm 12mm}@media print{body{padding:0}}</style></head><body>';
-              h+='<div class="ph"><span>RDO n\u00b0 '+rdoNum+' - '+dataFmt+'</span><span class="ap">Aprovado</span></div>';
-              h+='<div class="lb"><div class="lt">F E L T</div></div><h1>Relat\u00f3rio Di\u00e1rio de Obra (RDO)</h1>';
-              h+='<table><tr><th>N\u00b0</th><td>'+rdoNum+'</td><th>Data</th><td>'+dataFmt+'</td><th>Dia</th><td>'+diaSem+'</td></tr>';
+              var atividades = (r.atividades||"").split("\n").filter(function(x){return x.trim()});
+              var h = "<!DOCTYPE html><html><head><title>RDO</title><style>";
+              h+="*{margin:0;padding:0;box-sizing:border-box}";
+              h+="body{font-family:Arial,sans-serif;color:#000;padding:20px 30px;max-width:800px;margin:0 auto;font-size:12px}";
+              h+=".ph{display:flex;justify-content:space-between;font-size:10px;color:#333;margin-bottom:8px}";
+              h+=".ap{background:#0B1A3B;color:#fff;padding:3px 12px;font-weight:700;font-size:10px}";
+              h+=".lb{text-align:center;padding:12px;border:1px solid #ccc}";
+              h+=".lt{font-size:22px;font-weight:900;letter-spacing:6px;color:#0B1A3B}";
+              h+="h1{font-size:14px;font-weight:700;text-align:center;padding:8px;border:1px solid #ccc;border-top:none}";
+              h+="table{width:100%;border-collapse:collapse}td,th{padding:6px 10px;border:1px solid #ccc;font-size:11px;vertical-align:top}";
+              h+="th{background:#f5f5f5;font-weight:700;text-align:left}";
+              h+=".sh{background:#f0f0f0;font-weight:700;padding:6px 10px;border:1px solid #ccc;font-size:11px}";
+              h+=".fg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc}";
+              h+=".fc{border:1px solid #ccc;padding:4px;text-align:center}.fc img{width:100%;max-height:320px;object-fit:cover}";
+              h+=".as{display:flex;justify-content:space-between;margin-top:60px}.as div{text-align:center;width:45%}";
+              h+=".al{border-top:1px solid #000;padding-top:4px;font-size:11px;margin-top:40px}";
+              h+="@page{margin:15mm 12mm}@media print{body{padding:0}}";
+              h+="</style></head><body>";
+              h+='<div class="ph"><span>Relatório '+dataFmt+' n\u00b0 '+rdoNum+'</span><span class="ap">Aprovado</span></div>';
+              h+='<div class="lb"><div class="lt">F E L T</div></div>';
+              h+="<h1>Relat\u00f3rio Di\u00e1rio de Obra (RDO)</h1>";
+              h+='<table><tr><th>Relat\u00f3rio n\u00b0</th><td>'+rdoNum+'</td><th>Data do relat\u00f3rio</th><td>'+dataFmt+'</td><th>Dia da semana</th><td>'+diaSemana+'</td></tr>';
               h+='<tr><th>Obra</th><td colspan="5">'+obraNome+'</td></tr></table>';
-              h+='<table style="margin-top:12px"><tr><th>Equipe presente</th></tr><tr><td>'+(r.equipePres||"-")+'</td></tr></table>';
+              h+='<table style="margin-top:12px"><tr><th colspan="2">Hor\u00e1rio de trabalho</th><th colspan="2">Informa\u00e7\u00f5es</th></tr>';
+              h+='<tr><td>Entrada / Sa\u00edda</td><td>-</td><td>Clima</td><td>'+(r.clima||"\u2014")+'</td></tr>';
+              h+='<tr><td>Intervalo</td><td>-</td><td>Equipe</td><td>'+(r.equipePres||"\u2014")+'</td></tr></table>';
               h+='<table style="margin-top:12px"><tr><td class="sh" colspan="2">Atividades</td></tr>';
-              ativs.forEach(function(a){h+='<tr><td style="padding:6px 12px">- '+a.trim()+'</td><td style="width:120px;text-align:center">Em Andamento</td></tr>';});
-              if(!ativs.length)h+='<tr><td colspan="2">-</td></tr>';
-              h+='</table>';
-              if(r.materiaisRecebidos){h+='<table style="margin-top:12px"><tr><td class="sh">Materiais Recebidos</td></tr><tr><td>'+r.materiaisRecebidos+'</td></tr></table>';}
-              if(r.ocorrencias){h+='<table style="margin-top:12px"><tr><td class="sh">Ocorr\u00eancias</td></tr><tr><td style="background:#fff8e1">'+r.ocorrencias.replace(/\n/g,"<br>")+'</td></tr></table>';}
-              if(fotos.length>0){h+='<div style="margin-top:12px"><div class="sh" style="border:1px solid #ccc">Fotos ('+fotos.length+')</div></div><div class="fg">';fotos.forEach(function(f2){h+='<div class="fc"><img src="'+f2+'"/></div>';});if(fotos.length%2!==0)h+='<div class="fc"></div>';h+='</div>';}
-              h+='<div class="as"><div><div class="al">Assinatura</div></div><div><div class="al">Assinatura</div></div></div></body></html>';
-              var w2=window.open("","_blank");w2.document.write(h);w2.document.close();setTimeout(function(){w2.print();},800);
+              atividades.forEach(function(a){ h+='<tr><td style="padding:6px 12px">- '+a.trim()+'</td><td style="width:120px;text-align:center">Em Andamento</td></tr>'; });
+              if(!atividades.length) h+='<tr><td colspan="2">-</td></tr>';
+              h+="</table>";
+              if(r.materiaisRecebidos){ h+='<table style="margin-top:12px"><tr><td class="sh">Materiais Recebidos</td></tr><tr><td>'+r.materiaisRecebidos+'</td></tr></table>'; }
+              if(r.ocorrencias){ h+='<table style="margin-top:12px"><tr><td class="sh">Ocorr\u00eancias</td></tr><tr><td style="background:#fff8e1">'+r.ocorrencias.replace(/\n/g,"<br>")+'</td></tr></table>'; }
+              if(fotos.length>0){
+                h+='<div style="margin-top:12px"><div class="sh" style="border:1px solid #ccc">Fotos ('+fotos.length+')</div></div><div class="fg">';
+                fotos.forEach(function(f2){ h+='<div class="fc"><img src="'+f2+'"/></div>'; });
+                if(fotos.length%2!==0) h+='<div class="fc"></div>';
+                h+="</div>";
+              }
+              h+='<div class="as"><div><div class="al">Assinatura</div></div><div><div class="al">Assinatura</div></div></div>';
+              h+="</body></html>";
+              var w2 = window.open("","_blank");
+              w2.document.write(h);
+              w2.document.close();
+              setTimeout(function(){ w2.print(); },800);
             };
             return (
-              <div key={r.id} style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px"}}>
+              <div key={r.id} style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
                   <div>
-                    <p style={{fontSize:15,fontWeight:800}}>{fmtD(r.data)} — {ob?ob.nome:"—"}</p>
-                    {fotos.length>0 && <Badge text={fotos.length+" fotos"} color={C.purple} size="sm"/>}
+                    <p style={{fontSize:15,fontWeight:800}}>{fmtD(r.data)} — {ob?.nome||"—"}</p>
+                    <div style={{display:"flex",gap:8,marginTop:4}}>
+                      <Badge text={r.clima||"—"} color={C.cyan} size="sm"/>
+                      {fotos.length>0 && <Badge text={`${fotos.length} fotos`} color={C.purple} size="sm"/>}
+                    </div>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 12px"}}>📄 PDF</button>
-                    {canEdit && <button onClick={function(){if(window.confirm("Excluir este RDO?"))fbDelRdo(r.id);}} style={{...btnGhost,fontSize:11,padding:"6px 12px",borderColor:C.red+"44",color:C.red}}>🗑️</button>}
-                  </div>
+                  <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 14px"}}>📄 Gerar PDF</button>
                 </div>
                 {r.equipePres && <p style={{fontSize:12,color:C.textMuted,marginBottom:6}}>👷 {r.equipePres}</p>}
                 <p style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:8,whiteSpace:"pre-line"}}>{r.atividades}</p>
@@ -3810,11 +3699,15 @@ function App() {
                 {r.materiaisRecebidos && <p style={{fontSize:12,color:C.textDim,marginBottom:6}}>📦 {r.materiaisRecebidos}</p>}
                 {fotos.length > 0 && (
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6,marginTop:10}}>
-                    {fotos.map(function(f2,i2){return(
-                      <a key={i2} href={f2} target="_blank" rel="noopener noreferrer" style={{display:"block",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border,aspectRatio:"1"}}>
-                        <img src={f2} alt={"Foto "+(i2+1)} style={{width:"100%",height:"100%",objectFit:"cover"}} loading="lazy"/>
+                    {fotos.map((f,i)=>(
+                      <a key={i} href={f} target="_blank" rel="noopener noreferrer" style={{
+                        display:"block",borderRadius:8,overflow:"hidden",
+                        border:`1px solid ${C.border}`,aspectRatio:"1",
+                        transition:"all 0.2s"
+                      }} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;e.currentTarget.style.transform="scale(1.05)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="scale(1)";}}>
+                        <img src={f} alt={`Foto ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover"}} loading="lazy"/>
                       </a>
-                    );})}
+                    ))}
                   </div>
                 )}
               </div>
@@ -3932,26 +3825,21 @@ function App() {
   // RENDER PAGE SWITCH — ATUALIZADO COM NOVOS MÓDULOS
   // ══════════════════════════════════════════════════════════════
   const renderPage = () => {
-    try {
-      switch(page) {
-        case "dashboard": return <DashPage/>;
-        case "obras": return <ObrasPage/>;
-        case "faturamento": return <FatPage/>;
-        case "funcionarios": return <EquipePage/>;
-        case "operacional": return <LancPage tipo="operacional" titulo="Operacional" emoji="⛽"/>;
-        case "administrativo": return <LancPage tipo="administrativo" titulo="Administrativo" emoji="💼"/>;
-        case "kpis": return <KPIsPage/>;
-        case "portais": return <PortaisPage/>;
-        case "historico": return <HistoricoPage/>;
-        case "tesouraria": return <TesourariaPage/>;
-        case "rdo": return <RdoPage/>;
-        case "compras": return <ComprasPage/>;
-        case "medicoes": return <MedicoesPage/>;
-        default: return <DashPage/>;
-      }
-    } catch(err) {
-      console.error("Erro na página "+page+":", err);
-      return <div style={{padding:40,color:C.red}}><h2>Erro ao renderizar</h2><p style={{color:C.textMuted,marginTop:12}}>{err.message}</p><button onClick={function(){setPage("dashboard")}} style={btnPrimary}>Voltar ao Dashboard</button></div>;
+    switch(page) {
+      case "dashboard": return <DashPage/>;
+      case "obras": return <ObrasPage/>;
+      case "faturamento": return <FatPage/>;
+      case "funcionarios": return <EquipePage/>;
+      case "operacional": return <LancPage tipo="operacional" titulo="Operacional" emoji="⛽"/>;
+      case "administrativo": return <LancPage tipo="administrativo" titulo="Administrativo" emoji="💼"/>;
+      case "kpis": return <KPIsPage/>;
+      case "portais": return <PortaisPage/>;
+      case "historico": return <HistoricoPage/>;
+      case "tesouraria": return <TesourariaPage/>;
+      case "rdo": return <RdoPage/>;
+      case "compras": return <ComprasPage/>;
+      case "medicoes": return <MedicoesPage/>;
+      default: return <DashPage/>;
     }
   };
 
@@ -3987,12 +3875,7 @@ function App() {
   // ══════════════════════════════════════════════════════════════
   // MAIN LAYOUT — RESPONSIVO (item 8)
   // ══════════════════════════════════════════════════════════════
-  const [isMobile,setIsMobile] = useState(typeof window !== "undefined" && window.innerWidth < 768);
-  useEffect(function(){
-    var handler = function(){ setIsMobile(window.innerWidth < 768); };
-    window.addEventListener("resize",handler);
-    return function(){ window.removeEventListener("resize",handler); };
-  },[]);
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   return (
     <div style={{display:"flex",flexDirection:isMobile?"column":"row",minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'SF Pro Display','Inter',system-ui,sans-serif"}}>
