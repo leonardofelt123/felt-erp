@@ -39,8 +39,8 @@ const PORTAL_TOKENS = {
   "epico-analice":"EPICO 154 - ANALICE","hl-227":"HL 227"
 };
 const USERS = [
-  { username:"leonardo", password:"felt2026", role:"admin", nome:"Leonardo Felt", avatar:"LF" },
-  { username:"salles", password:"salles2026", role:"admin", nome:"Salles Paulo", avatar:"SP" },
+  { username:"leonardo", password:"leonardofelt2026", role:"admin", nome:"Leonardo Felt", avatar:"LF" },
+  { username:"salles", password:"sallesfelt2026", role:"admin", nome:"Salles Paulo", avatar:"SP" },
   { username:"tiago", password:"tiago123", role:"viewer", nome:"Tiago Engenheiro", avatar:"TE" },
   { username:"rafael", password:"felt2026", role:"estagiario", nome:"Rafael Estagiário", avatar:"RF" }
 ];
@@ -2073,7 +2073,6 @@ function App() {
             type="file"
             accept="image/*"
             multiple
-            capture="environment"
             onChange={e=>handleFiles(e.target.files)}
             style={{display:"none"}}
           />
