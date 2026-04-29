@@ -699,6 +699,7 @@ function ClientPortal({ token, data }) {
             {id:"timeline",label:"📍 Timeline da Obra"},
             {id:"custos",label:"💰 Custos Aplicados"},
             {id:"documentos",label:"📄 Documentos & NFs"},
+            {id:"rdos",label:"📋 RDOs"},
             {id:"aditivos",label:"✍️ Aditivos"}
           ].map(t => (
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
@@ -931,6 +932,30 @@ function ClientPortal({ token, data }) {
                 );
               })()}
             </div>
+          </div>
+        )}
+
+        {/* TAB: RDOS */}
+        {tab === "rdos" && (
+          <div>
+            {(function(){
+              var rdosObra = Object.values(data.rdos || {}).filter(function(r){return r.obraId===(obraMatch?obraMatch.id:"")}).sort(function(a,b){return(b.data||"").localeCompare(a.data||"")});
+              if(rdosObra.length===0) return <div style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"40px",textAlign:"center"}}><p style={{color:C.textDim,fontSize:13}}>Nenhum RDO registrado para esta obra</p></div>;
+              return rdosObra.map(function(r,idx){
+                var fotosRdo = Array.isArray(r.fotos)?r.fotos.filter(function(x){return x}):[];
+                return React.createElement("div",{key:r.id||idx,style:{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px",marginBottom:12}},
+                  React.createElement("p",{style:{fontSize:15,fontWeight:800,marginBottom:8}},fmtD(r.data)),
+                  r.equipePres&&React.createElement("p",{style:{fontSize:12,color:C.textMuted,marginBottom:6}},"Equipe: "+r.equipePres),
+                  React.createElement("p",{style:{fontSize:13,lineHeight:1.6,marginBottom:8,whiteSpace:"pre-line"}},r.atividades),
+                  r.ocorrencias&&React.createElement("p",{style:{fontSize:12,color:C.amber,marginBottom:6}},"Ocorrências: "+r.ocorrencias),
+                  fotosRdo.length>0&&React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:6,marginTop:8}},
+                    fotosRdo.map(function(f2,i2){return React.createElement("a",{key:i2,href:f2,target:"_blank",rel:"noopener noreferrer",style:{display:"block",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border,aspectRatio:"1"}},
+                      React.createElement("img",{src:f2,style:{width:"100%",height:"100%",objectFit:"cover"},loading:"lazy"})
+                    )})
+                  )
+                );
+              });
+            })()}
           </div>
         )}
 
@@ -2006,7 +2031,8 @@ function App() {
         }
         return results;
       }
-      const obraNome = (obras.find(o=>o.id===f.obraId)?.nome||"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
+      var obraObj = obras.find(function(o){return o.id===f.obraId});
+      const obraNome = (obraObj?obraObj.nome:"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
       const results = [];
       for (let i=0; i<fotos.length; i++) {
         const foto = fotos[i];
@@ -2014,7 +2040,7 @@ function App() {
         setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:true} : p));
         try {
           const ext = foto.file.name.split(".").pop() || "jpg";
-          const path = `rdos/${obraNome}/${f.data}/${Date.now()}-${i}.${ext}`;
+          var path = "fotos-obras/" + obraNome + "/" + f.data + "/foto-" + i + "-" + Date.now() + "." + ext;
           const storageRef = sRef(storage, path);
           await uploadBytes(storageRef, foto.file);
           const url = await getDownloadURL(storageRef);
@@ -2044,7 +2070,7 @@ function App() {
 
     return (
       <Modal title="Registrar RDO" onClose={onClose} wide>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
           <Field label="Obra">
             <select value={f.obraId} onChange={e=>setF(p=>({...p,obraId:e.target.value}))} style={selectStyle}>
               {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
@@ -2052,11 +2078,6 @@ function App() {
           </Field>
           <Field label="Data">
             <input type="date" value={f.data} onChange={e=>setF(p=>({...p,data:e.target.value}))} style={inputStyle}/>
-          </Field>
-          <Field label="Clima">
-            <select value={f.clima} onChange={e=>setF(p=>({...p,clima:e.target.value}))} style={selectStyle}>
-              {["Ensolarado","Nublado","Chuva leve","Chuva forte","Parcialmente nublado"].map(c=><option key={c}>{c}</option>)}
-            </select>
           </Field>
         </div>
         <Field label="Equipe presente">
@@ -2521,6 +2542,22 @@ function App() {
                   if(window.confirm(`Tem certeza que deseja excluir "${o.nome}"?\n\nTodos os lançamentos desta obra também serão removidos. Esta ação não pode ser desfeita.`))
                     fbDelObra(o.id);
                 }} style={{...btnGhost,borderColor:C.red+"44",color:C.red}}>🗑️ Excluir</button>}
+                <button onClick={function(){
+                  var rdosObra = rdos.filter(function(r){return r.obraId===o.id});
+                  var todasFotos = [];
+                  rdosObra.forEach(function(r){
+                    var ft = Array.isArray(r.fotos)?r.fotos.filter(function(x){return x}):[];
+                    ft.forEach(function(url,idx){todasFotos.push({url:url,nome:fmtD(r.data)+"_foto_"+(idx+1)})});
+                  });
+                  if(todasFotos.length===0){showToast("Nenhuma foto nesta obra");return}
+                  showToast("Baixando "+todasFotos.length+" fotos...");
+                  todasFotos.forEach(function(f2,i){
+                    setTimeout(function(){
+                      var a2=document.createElement("a");a2.href=f2.url;a2.target="_blank";a2.rel="noopener noreferrer";
+                      document.body.appendChild(a2);a2.click();document.body.removeChild(a2);
+                    },i*500);
+                  });
+                }} style={{...btnGhost,borderColor:C.cyan+"44",color:C.cyan}}>📥 Fotos</button>
                 <button onClick={()=>setModal({type:"lancForm",tipo:"obra"})} style={btnPrimary}>＋ Lançamento</button>
               </div>
             )}
@@ -2760,6 +2797,44 @@ function App() {
         {/* TAB VISÃO */}
         {eqTab === "visao" && (
           <div>
+            {isAdmin && (
+              <div style={{background:C.gold+"08",borderRadius:16,border:"1px solid "+C.gold+"33",padding:"20px 24px",marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:12}}>
+                  <div>
+                    <p style={{fontSize:11,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:1.2}}>Confirmar Pagamento Mensal</p>
+                    <p style={{fontSize:12,color:C.textMuted,marginTop:4}}>Lança o salário de cada mensalista e rateia entre as obras ativas</p>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <select id="pag-mes" style={{...selectStyle,padding:"8px 12px",fontSize:12,width:160}}>
+                      {["2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07","2026-08","2026-09","2026-10","2026-11","2026-12"].map(function(m){
+                        var label=["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][parseInt(m.slice(5))-1];
+                        return <option key={m} value={m}>{label}/{m.slice(0,4)}</option>
+                      })}
+                    </select>
+                    <button onClick={function(){
+                      var mes=document.getElementById("pag-mes").value;
+                      var label2=mes.replace("-","/");
+                      var jaLancado=lancsFuncionario.some(function(l){return l.data&&l.data.startsWith(mes)});
+                      if(jaLancado&&!window.confirm("Já existem lançamentos em "+label2+". Lançar novamente?"))return;
+                      var count=0;
+                      mensalistas.forEach(function(s){
+                        fbAddLanc({descricao:s.nome+" — "+label2,valor:s.salario||0,data:mes+"-15",centroCusto:s.nome.split(" ")[0].toUpperCase(),obs:"Pagamento mensal "+label2,obraId:"",tipo:"funcionario"});
+                        count++;
+                      });
+                      showToast(count+" pagamentos lançados para "+label2);
+                    }} style={{...btnPrimary,padding:"9px 16px",fontSize:12}}>✓ Confirmar</button>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {mensalistas.map(function(s){return(
+                    <div key={s.id} style={{background:C.bg,borderRadius:8,padding:"6px 12px",border:"1px solid "+C.border,fontSize:12}}>
+                      <span style={{fontWeight:700}}>{s.nome}</span>
+                      <span style={{color:C.gold,fontFamily:"'JetBrains Mono',monospace",marginLeft:8}}>{R$(s.salario)}</span>
+                    </div>
+                  )})}
+                </div>
+              </div>
+            )}
             <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
               <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:16}}>Mensalistas ({mensalistas.length})</p>
               <div style={{overflowX:"auto"}}>
@@ -2886,10 +2961,10 @@ function App() {
         {/* TAB DIÁRIAS */}
         {eqTab === "diarias" && (
           <div>
-            {isAdmin && (
-              <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
-                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Registrar Diária</p>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:10,alignItems:"flex-end"}}>
+            {(isAdmin || isEstagiario) && (
+              <div style={{background:C.surface,borderRadius:16,border:"1px solid "+C.border,padding:"20px 24px",marginBottom:16}}>
+                <p style={{fontSize:11,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:1.2,marginBottom:12}}>Registrar Diárias em Lote</p>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                   <div>
                     <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Funcionário</label>
                     <select id="di-func" style={{...inputStyle,padding:"8px 12px",fontSize:12}}>
@@ -2897,22 +2972,41 @@ function App() {
                     </select>
                   </div>
                   <div>
-                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Obra</label>
-                    <select id="di-obra" style={{...inputStyle,padding:"8px 12px",fontSize:12}}>
-                      {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
-                    </select>
+                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Semana de referência</label>
+                    <input type="date" id="di-semana" defaultValue={new Date().toISOString().slice(0,10)} style={{...inputStyle,padding:"8px 12px",fontSize:12}}/>
                   </div>
-                  <div>
-                    <label style={{fontSize:10,color:C.textDim,display:"block",marginBottom:4}}>Data</label>
-                    <input type="date" id="di-data" defaultValue={new Date().toISOString().slice(0,10)} style={{...inputStyle,padding:"8px 12px",fontSize:12}}/>
-                  </div>
-                  <button onClick={()=>{
-                    const eqId = document.getElementById("di-func").value;
-                    const oId = document.getElementById("di-obra").value;
-                    const d = document.getElementById("di-data").value;
-                    if (eqId && oId && d) fbAddDiaria({equipeId:eqId,obraId:oId,data:d});
-                  }} style={{...btnPrimary,padding:"9px 16px",fontSize:12}}>＋ Registrar</button>
                 </div>
+                <p style={{fontSize:10,color:C.textDim,marginBottom:8}}>Selecione a obra para cada dia. Dias sem obra serão ignorados.</p>
+                <div style={{display:"grid",gap:6}}>
+                  {["Segunda","Terça","Quarta","Quinta","Sexta","Sábado"].map(function(dia,idx){return(
+                    <div key={dia} style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:12,fontWeight:600,width:70,color:C.textMuted}}>{dia}</span>
+                      <select id={"di-obra-"+idx} style={{...inputStyle,padding:"6px 10px",fontSize:11,flex:1}}>
+                        <option value="">— Não trabalhou —</option>
+                        {obrasAtivas.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+                      </select>
+                    </div>
+                  )})}
+                </div>
+                <button onClick={function(){
+                  var eqId = document.getElementById("di-func").value;
+                  var semanaRef = document.getElementById("di-semana").value;
+                  if(!eqId||!semanaRef) return;
+                  var baseDate = new Date(semanaRef+"T12:00:00");
+                  var dow = baseDate.getDay();
+                  var mondayOffset = dow===0?-6:1-dow;
+                  var count=0;
+                  [0,1,2,3,4,5].forEach(function(idx){
+                    var obraId=document.getElementById("di-obra-"+idx).value;
+                    if(!obraId)return;
+                    var d2=new Date(baseDate);
+                    d2.setDate(baseDate.getDate()+mondayOffset+idx);
+                    var dataStr=d2.toISOString().slice(0,10);
+                    fbAddDiaria({equipeId:eqId,obraId:obraId,data:dataStr});
+                    count++;
+                  });
+                  if(count>0) showToast(count+" diárias registradas");
+                }} style={{...btnPrimary,marginTop:12,width:"100%",justifyContent:"center",padding:"10px 0",fontSize:12}}>＋ Registrar Diárias da Semana</button>
               </div>
             )}
 
@@ -3659,9 +3753,8 @@ function App() {
               h+="<h1>Relat\u00f3rio Di\u00e1rio de Obra (RDO)</h1>";
               h+='<table><tr><th>Relat\u00f3rio n\u00b0</th><td>'+rdoNum+'</td><th>Data do relat\u00f3rio</th><td>'+dataFmt+'</td><th>Dia da semana</th><td>'+diaSemana+'</td></tr>';
               h+='<tr><th>Obra</th><td colspan="5">'+obraNome+'</td></tr></table>';
-              h+='<table style="margin-top:12px"><tr><th colspan="2">Hor\u00e1rio de trabalho</th><th colspan="2">Informa\u00e7\u00f5es</th></tr>';
-              h+='<tr><td>Entrada / Sa\u00edda</td><td>-</td><td>Clima</td><td>'+(r.clima||"\u2014")+'</td></tr>';
-              h+='<tr><td>Intervalo</td><td>-</td><td>Equipe</td><td>'+(r.equipePres||"\u2014")+'</td></tr></table>';
+              h+='<table style="margin-top:12px"><tr><th>Equipe presente</th></tr>';
+              h+='<tr><td>'+(r.equipePres||"\u2014")+'</td></tr></table>';
               h+='<table style="margin-top:12px"><tr><td class="sh" colspan="2">Atividades</td></tr>';
               atividades.forEach(function(a){ h+='<tr><td style="padding:6px 12px">- '+a.trim()+'</td><td style="width:120px;text-align:center">Em Andamento</td></tr>'; });
               if(!atividades.length) h+='<tr><td colspan="2">-</td></tr>';
@@ -3686,12 +3779,12 @@ function App() {
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
                   <div>
                     <p style={{fontSize:15,fontWeight:800}}>{fmtD(r.data)} — {ob?.nome||"—"}</p>
-                    <div style={{display:"flex",gap:8,marginTop:4}}>
-                      <Badge text={r.clima||"—"} color={C.cyan} size="sm"/>
-                      {fotos.length>0 && <Badge text={`${fotos.length} fotos`} color={C.purple} size="sm"/>}
-                    </div>
+                    {fotos.length>0 && <Badge text={fotos.length+" fotos"} color={C.purple} size="sm"/>}
                   </div>
-                  <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 14px"}}>📄 Gerar PDF</button>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 12px"}}>📄 PDF</button>
+                    {canEdit && <button onClick={function(){if(window.confirm("Excluir este RDO?"))fbDelRdo(r.id)}} style={{...btnGhost,fontSize:11,padding:"6px 12px",borderColor:C.red+"44",color:C.red}}>🗑️</button>}
+                  </div>
                 </div>
                 {r.equipePres && <p style={{fontSize:12,color:C.textMuted,marginBottom:6}}>👷 {r.equipePres}</p>}
                 <p style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:8,whiteSpace:"pre-line"}}>{r.atividades}</p>
