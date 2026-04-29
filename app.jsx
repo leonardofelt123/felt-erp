@@ -1989,7 +1989,6 @@ function App() {
     });
     const [fotos,setFotos] = useState([]); // {file,preview,uploading,url,error}
     const [saving,setSaving] = useState(false);
-    const fileInputRef = useRef(null);
 
     const handleFiles = function(files) {
       if(!files || !files.length) { console.log("Nenhum arquivo selecionado"); return; }
@@ -2099,38 +2098,27 @@ function App() {
 
         {/* UPLOAD DE FOTOS — direto da galeria */}
         <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Toque para selecionar fotos. Pode tocar várias vezes para adicionar mais.">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={function(e){
-              console.log("onChange disparado, files:", e.target.files ? e.target.files.length : 0);
-              if(e.target.files && e.target.files.length > 0) {
-                handleFiles(e.target.files);
-              }
-              setTimeout(function(){ if(e.target) e.target.value=""; }, 100);
-            }}
-            style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",zIndex:-1}}
-          />
           <div style={{display:"flex",gap:8,marginBottom:10}}>
-            <button type="button" onClick={function(e){
-              e.preventDefault();
-              if(fileInputRef.current) fileInputRef.current.click();
-            }} style={{
+            <label style={{
               ...btnGhost,flex:1,justifyContent:"center",padding:"14px 0",
-              borderColor:C.gold+"44",color:C.gold,fontSize:13
-            }}>📸 Selecionar fotos</button>
-            <button type="button" onClick={function(e){
-              e.preventDefault();
-              var inp = document.createElement("input");
-              inp.type="file"; inp.accept="image/*"; inp.capture="environment";
-              inp.onchange=function(ev){if(ev.target.files)handleFiles(ev.target.files)};
-              inp.click();
-            }} style={{
+              borderColor:C.gold+"44",color:C.gold,fontSize:13,cursor:"pointer",textAlign:"center"
+            }}>
+              📸 Selecionar fotos
+              <input type="file" accept="image/*" multiple onChange={function(e){
+                if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
+                setTimeout(function(){ e.target.value=""; }, 200);
+              }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
+            </label>
+            <label style={{
               ...btnGhost,justifyContent:"center",padding:"14px 16px",
-              borderColor:C.cyan+"44",color:C.cyan,fontSize:13
-            }}>📷 Tirar foto</button>
+              borderColor:C.cyan+"44",color:C.cyan,fontSize:13,cursor:"pointer"
+            }}>
+              📷 Tirar foto
+              <input type="file" accept="image/*" capture="environment" onChange={function(e){
+                if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
+                setTimeout(function(){ e.target.value=""; }, 200);
+              }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
+            </label>
           </div>
 
           {fotos.length > 0 && (
@@ -2188,7 +2176,6 @@ function App() {
     const [novasFotos,setNovasFotos] = useState([]);
     const [fotosRemovidas,setFotosRemovidas] = useState([]);
     const [saving,setSaving] = useState(false);
-    const editFileRef = useRef(null);
 
     const handleNewFiles = function(files) {
       var arr = Array.from(files).map(function(file){return {file:file,preview:URL.createObjectURL(file),uploading:false,url:null}});
@@ -2255,8 +2242,10 @@ function App() {
         </Field>
 
         <Field label={"Fotos ("+( fotosExistentes.length - fotosRemovidas.length + novasFotos.length )+")"}>
-          <input ref={editFileRef} type="file" accept="image/*" multiple onChange={function(e){if(e.target.files&&e.target.files.length>0)handleNewFiles(e.target.files);setTimeout(function(){if(e.target)e.target.value=""},100)}} style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",zIndex:-1}}/>
-          <button type="button" onClick={function(){editFileRef.current&&editFileRef.current.click()}} style={{...btnGhost,marginBottom:10,borderColor:C.gold+"44",color:C.gold}}>📸 Adicionar mais fotos</button>
+          <label style={{...btnGhost,marginBottom:10,borderColor:C.gold+"44",color:C.gold,cursor:"pointer",display:"inline-flex"}}>
+            📸 Adicionar mais fotos
+            <input type="file" accept="image/*" multiple onChange={function(e){if(e.target.files&&e.target.files.length>0)handleNewFiles(e.target.files);setTimeout(function(){e.target.value=""},200)}} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
+          </label>
 
           {(fotosExistentes.length > 0 || novasFotos.length > 0) && (
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
