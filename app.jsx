@@ -1030,6 +1030,11 @@ function App() {
   const [modal,setModal] = useState(null);
   const [selObra,setSelObra] = useState(null);
   const [filterMes,setFilterMes] = useState("todos");
+  const [eqTab,setEqTab] = useState("visao");
+  const [eqFiltroMes,setEqFiltroMes] = useState(new Date().toISOString().slice(0,7));
+  const [fTab,setFTab] = useState("visao");
+  const [fFiltroStatus,setFFiltroStatus] = useState("todos");
+  const [filtroObra,setFiltroObra] = useState("todos");
   const [sideCollapsed,setSideCollapsed] = useState(false);
   const [toast,setToast] = useState(null);
   const [search,setSearch] = useState("");
@@ -2085,24 +2090,24 @@ function App() {
         </Field>
 
         {/* UPLOAD DE FOTOS — direto da galeria */}
-        <Field label={`Fotos do dia (${fotos.length} selecionadas)`} hint="Selecione da galeria do celular ou câmera. Múltiplas fotos de uma vez.">
+        <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Toque para selecionar fotos. Pode selecionar várias de uma vez ou adicionar mais depois.">
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/*"
             multiple
-            onChange={e=>handleFiles(e.target.files)}
+            onChange={function(e){handleFiles(e.target.files);e.target.value="";}}
             style={{display:"none"}}
           />
           <div style={{display:"flex",gap:8,marginBottom:10}}>
-            <button onClick={()=>fileInputRef.current?.click()} style={{
+            <button type="button" onClick={function(){fileInputRef.current&&fileInputRef.current.click()}} style={{
               ...btnGhost,flex:1,justifyContent:"center",padding:"14px 0",
               borderColor:C.gold+"44",color:C.gold,fontSize:13
-            }}>📸 Selecionar da galeria</button>
-            <button onClick={()=>{
-              const inp = document.createElement("input");
+            }}>📸 Selecionar fotos</button>
+            <button type="button" onClick={function(){
+              var inp = document.createElement("input");
               inp.type="file"; inp.accept="image/*"; inp.capture="environment";
-              inp.onchange=e=>handleFiles(e.target.files);
+              inp.onchange=function(e){handleFiles(e.target.files)};
               inp.click();
             }} style={{
               ...btnGhost,justifyContent:"center",padding:"14px 16px",
@@ -2151,6 +2156,117 @@ function App() {
       </Modal>
     );
   };
+
+  const RdoEditForm = ({initial,onClose}) => {
+    const [f,setF] = useState({
+      obraId: initial.obraId || "",
+      data: initial.data || "",
+      equipePres: initial.equipePres || "",
+      atividades: initial.atividades || "",
+      ocorrencias: initial.ocorrencias || "",
+      materiaisRecebidos: initial.materiaisRecebidos || ""
+    });
+    const [fotosExistentes] = useState(Array.isArray(initial.fotos) ? initial.fotos.filter(function(x){return x}) : []);
+    const [novasFotos,setNovasFotos] = useState([]);
+    const [fotosRemovidas,setFotosRemovidas] = useState([]);
+    const [saving,setSaving] = useState(false);
+    const editFileRef = useRef(null);
+
+    const handleNewFiles = function(files) {
+      var arr = Array.from(files).map(function(file){return {file:file,preview:URL.createObjectURL(file),uploading:false,url:null}});
+      setNovasFotos(function(prev){return prev.concat(arr)});
+    };
+    var removerExistente = function(idx){setFotosRemovidas(function(prev){return prev.concat([idx])})};
+    var removerNova = function(idx){setNovasFotos(function(prev){return prev.filter(function(_,j){return j!==idx})})};
+
+    var doSave = async function() {
+      setSaving(true);
+      try {
+        var fotosFinais = fotosExistentes.filter(function(_,idx){return fotosRemovidas.indexOf(idx)===-1});
+        // Upload novas fotos
+        if(novasFotos.length > 0 && storage) {
+          var obraObj2 = obras.find(function(o){return o.id===f.obraId});
+          var pastaObra = (obraObj2?obraObj2.nome:"obra").replace(/[^a-zA-Z0-9]/g,"-").toLowerCase();
+          for(var i=0;i<novasFotos.length;i++){
+            try {
+              var ext2 = (novasFotos[i].file.name||"foto.jpg").split(".").pop()||"jpg";
+              var path2 = "fotos-obras/"+pastaObra+"/"+f.data+"/foto-"+Date.now()+"-"+i+"."+ext2;
+              var sref2 = sRef(storage,path2);
+              await uploadBytes(sref2,novasFotos[i].file);
+              var url2 = await getDownloadURL(sref2);
+              fotosFinais.push(url2);
+            } catch(err2){console.error("Upload falhou:",err2)}
+          }
+        } else if(novasFotos.length > 0) {
+          // Fallback base64
+          for(var j=0;j<novasFotos.length;j++){
+            try {
+              var b64 = await new Promise(function(res,rej){var rdr=new FileReader();rdr.onload=function(){res(rdr.result)};rdr.onerror=rej;rdr.readAsDataURL(novasFotos[j].file)});
+              fotosFinais.push(b64);
+            } catch(e3){}
+          }
+        }
+        fbEditRdo(initial.id,Object.assign({},f,{fotos:fotosFinais}));
+        onClose();
+      } catch(err3){console.error(err3);setSaving(false)}
+    };
+
+    return (
+      <Modal title="Editar RDO" onClose={onClose} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <Field label="Obra">
+            <select value={f.obraId} onChange={function(e){setF(function(p){return Object.assign({},p,{obraId:e.target.value})})}} style={selectStyle}>
+              {obrasAtivas.map(function(o){return <option key={o.id} value={o.id}>{o.nome}</option>})}
+            </select>
+          </Field>
+          <Field label="Data">
+            <input type="date" value={f.data} onChange={function(e){setF(function(p){return Object.assign({},p,{data:e.target.value})})}} style={inputStyle}/>
+          </Field>
+        </div>
+        <Field label="Equipe presente">
+          <input value={f.equipePres} onChange={function(e){setF(function(p){return Object.assign({},p,{equipePres:e.target.value})})}} style={inputStyle}/>
+        </Field>
+        <Field label="Atividades executadas">
+          <textarea rows={4} value={f.atividades} onChange={function(e){setF(function(p){return Object.assign({},p,{atividades:e.target.value})})}} style={{...inputStyle,resize:"vertical"}}/>
+        </Field>
+        <Field label="Ocorrências">
+          <textarea rows={2} value={f.ocorrencias} onChange={function(e){setF(function(p){return Object.assign({},p,{ocorrencias:e.target.value})})}} style={{...inputStyle,resize:"vertical"}}/>
+        </Field>
+        <Field label="Materiais recebidos">
+          <input value={f.materiaisRecebidos} onChange={function(e){setF(function(p){return Object.assign({},p,{materiaisRecebidos:e.target.value})})}} style={inputStyle}/>
+        </Field>
+
+        <Field label={"Fotos ("+( fotosExistentes.length - fotosRemovidas.length + novasFotos.length )+")"}>
+          <input ref={editFileRef} type="file" accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/*" multiple onChange={function(e){handleNewFiles(e.target.files);e.target.value=""}} style={{display:"none"}}/>
+          <button type="button" onClick={function(){editFileRef.current&&editFileRef.current.click()}} style={{...btnGhost,marginBottom:10,borderColor:C.gold+"44",color:C.gold}}>📸 Adicionar mais fotos</button>
+
+          {(fotosExistentes.length > 0 || novasFotos.length > 0) && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(80px,1fr))",gap:6}}>
+              {fotosExistentes.map(function(url,idx){
+                if(fotosRemovidas.indexOf(idx) !== -1) return null;
+                return React.createElement("div",{key:"ex-"+idx,style:{position:"relative",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border,aspectRatio:"1"}},
+                  React.createElement("img",{src:url,style:{width:"100%",height:"100%",objectFit:"cover"}}),
+                  React.createElement("button",{onClick:function(){removerExistente(idx)},style:{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.7)",border:"none",color:"#fff",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}},"✕")
+                );
+              })}
+              {novasFotos.map(function(foto,idx){
+                return React.createElement("div",{key:"nw-"+idx,style:{position:"relative",borderRadius:8,overflow:"hidden",border:"1px solid "+C.green,aspectRatio:"1"}},
+                  React.createElement("img",{src:foto.preview,style:{width:"100%",height:"100%",objectFit:"cover"}}),
+                  React.createElement("div",{style:{position:"absolute",top:2,left:2,background:C.green,borderRadius:4,padding:"1px 5px",fontSize:9,color:"#fff"}},"NOVA"),
+                  React.createElement("button",{onClick:function(){removerNova(idx)},style:{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.7)",border:"none",color:"#fff",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}},"✕")
+                );
+              })}
+            </div>
+          )}
+        </Field>
+
+        <button onClick={doSave} disabled={saving} style={{...btnPrimary,width:"100%",justifyContent:"center",marginTop:8,padding:"13px 0",opacity:saving?0.6:1}}>
+          {saving ? "Salvando..." : "Salvar Alterações"}
+        </button>
+      </Modal>
+    );
+  };
+
 
   const CompraForm = ({onClose}) => {
     const [f,setF] = useState({
@@ -2728,9 +2844,6 @@ function App() {
 
   // ── EQUIPE — RECONSTRUÍDA COM INTEGRAÇÃO VISÍVEL DE CUSTO POR OBRA ──
   const EquipePage = () => {
-    const [eqTab,setEqTab] = useState("visao");
-    const [eqFiltroMes,setEqFiltroMes] = useState(new Date().toISOString().slice(0,7));
-    const [eqObraAloc,setEqObraAloc] = useState(obrasAtivas[0]?.id || "");
 
     // Calcular custo por obra — visão por mês selecionado
     const custoEquipePorObra = obrasAtivas.map(o => {
@@ -3209,8 +3322,6 @@ function App() {
   // ── FATURAMENTO RECONSTRUÍDA ──
   // Status funciona via fbStatusCob() corrigida: usa update() e findCobKey() robusto.
   const FatPage = () => {
-    const [fTab,setFTab] = useState("visao");
-    const [fFiltroStatus,setFFiltroStatus] = useState("todos");
 
     const cobsFiltered = fFiltroStatus === "todos" ? cobs : cobs.filter(c => c.status === fFiltroStatus);
     const cobsSort = [...cobsFiltered].sort((a,b)=>(a.data||"").localeCompare(b.data||""));
@@ -3769,7 +3880,6 @@ function App() {
 
   // ── RDO DIGITAL (item 6) ──
   const RdoPage = () => {
-    const [filtroObra,setFiltroObra] = useState("todos");
     const rdosFilt = filtroObra==="todos" ? rdos : rdos.filter(r=>r.obraId===filtroObra);
     const rdosSort = [...rdosFilt].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
 
@@ -3854,6 +3964,7 @@ function App() {
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={gerarPdf} style={{...btnGhost,fontSize:11,padding:"6px 12px"}}>📄 PDF</button>
+                    {canEdit && <button onClick={function(){setModal({type:"rdoEdit",rdo:r})}} style={{...btnGhost,fontSize:11,padding:"6px 12px",borderColor:C.accent+"44",color:C.accent}}>✏️</button>}
                     {canEdit && <button onClick={function(){if(window.confirm("Excluir este RDO?"))fbDelRdo(r.id)}} style={{...btnGhost,fontSize:11,padding:"6px 12px",borderColor:C.red+"44",color:C.red}}>🗑️</button>}
                   </div>
                 </div>
@@ -4187,6 +4298,7 @@ function App() {
       {modal?.type === "docForm" && <DocForm onClose={()=>setModal(null)}/>}
       {modal?.type === "portalForm" && <PortalForm onClose={()=>setModal(null)}/>}
       {modal?.type === "rdoForm" && <RdoForm onClose={()=>setModal(null)}/>}
+      {modal?.type === "rdoEdit" && <RdoEditForm initial={modal.rdo} onClose={()=>setModal(null)}/>}
       {modal?.type === "compraForm" && <CompraForm onClose={()=>setModal(null)}/>}
       {modal?.type === "medicaoForm" && <MedicaoForm onClose={()=>setModal(null)}/>}
 
