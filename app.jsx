@@ -1990,20 +1990,50 @@ function App() {
     const [fotos,setFotos] = useState([]); // {file,preview,uploading,url,error}
     const [saving,setSaving] = useState(false);
 
-    const handleFiles = function(files) {
+    const convertToJpeg = function(file) {
+      return new Promise(function(resolve) {
+        var img = new Image();
+        img.onload = function() {
+          var canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          var ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(function(blob) {
+            if(blob) {
+              var converted = new File([blob], (file.name||"foto").replace(/\.[^.]+$/,"")+".jpg", {type:"image/jpeg"});
+              resolve(converted);
+            } else {
+              resolve(file);
+            }
+          }, "image/jpeg", 0.85);
+        };
+        img.onerror = function() { resolve(file); };
+        img.src = URL.createObjectURL(file);
+      });
+    };
+
+    const handleFiles = async function(files) {
       if(!files || !files.length) return;
       var newFotos = [];
       for(var i=0; i<files.length; i++) {
         var file = files[i];
-        // Aceitar qualquer arquivo de imagem, incluindo webp do WhatsApp
-        if(file.type && file.type.indexOf("image") === -1 && file.type !== "" && file.type !== "application/octet-stream") continue;
+        var needsConvert = false;
+        var fName = (file.name||"").toLowerCase();
+        var fType = (file.type||"").toLowerCase();
+        if(fType.indexOf("webp") !== -1 || fName.endsWith(".webp")) needsConvert = true;
+        if(fType.indexOf("heic") !== -1 || fType.indexOf("heif") !== -1 || fName.endsWith(".heic") || fName.endsWith(".heif")) needsConvert = true;
+        if(fType === "" || fType === "application/octet-stream") needsConvert = true;
+
+        var finalFile = needsConvert ? await convertToJpeg(file) : file;
+
         newFotos.push({
-          file: file,
-          preview: URL.createObjectURL(file),
+          file: finalFile,
+          preview: URL.createObjectURL(finalFile),
           uploading: false,
           url: null,
           error: null,
-          name: file.name || ("foto-"+Date.now()+"-"+i+".jpg")
+          name: finalFile.name || ("foto-"+Date.now()+"-"+i+".jpg")
         });
       }
       if(newFotos.length > 0) setFotos(function(prev){ return prev.concat(newFotos); });
@@ -2102,29 +2132,23 @@ function App() {
           <input value={f.materiaisRecebidos} onChange={e=>setF(p=>({...p,materiaisRecebidos:e.target.value}))} style={inputStyle} placeholder="Ex: 50 sacos cimento, 20m² porcelanato"/>
         </Field>
 
-        {/* UPLOAD DE FOTOS — direto da galeria */}
-        <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Toque para selecionar fotos. Pode tocar várias vezes para adicionar mais.">
-          <div style={{display:"flex",gap:8,marginBottom:10}}>
-            <label style={{
-              ...btnGhost,flex:1,justifyContent:"center",padding:"14px 0",
-              borderColor:C.gold+"44",color:C.gold,fontSize:13,cursor:"pointer",textAlign:"center"
-            }}>
-              📸 Selecionar fotos
-              <input type="file" accept="image/*,.webp,.heic,.heif,.jpg,.jpeg,.png" multiple onChange={function(e){
+        {/* UPLOAD DE FOTOS */}
+        <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Selecione fotos da galeria, arquivos ou câmera.">
+          <div style={{display:"grid",gap:8,marginBottom:10}}>
+            <div style={{background:C.bg,borderRadius:12,border:"1px solid "+C.gold+"44",padding:"16px",textAlign:"center"}}>
+              <p style={{fontSize:12,color:C.gold,fontWeight:700,marginBottom:8}}>📸 Selecionar da Galeria</p>
+              <input type="file" accept="image/*" multiple onChange={function(e){
                 if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
                 setTimeout(function(){ e.target.value=""; }, 200);
-              }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
-            </label>
-            <label style={{
-              ...btnGhost,justifyContent:"center",padding:"14px 16px",
-              borderColor:C.cyan+"44",color:C.cyan,fontSize:13,cursor:"pointer"
-            }}>
-              📷 Tirar foto
-              <input type="file" accept="image/*,.webp,.heic,.heif,.jpg,.jpeg,.png" capture="environment" onChange={function(e){
+              }} style={{fontSize:14,width:"100%",color:C.text}}/>
+            </div>
+            <div style={{background:C.bg,borderRadius:12,border:"1px solid "+C.purple+"44",padding:"16px",textAlign:"center"}}>
+              <p style={{fontSize:12,color:C.purple,fontWeight:700,marginBottom:8}}>📁 Selecionar de Arquivos</p>
+              <input type="file" accept="*/*" multiple onChange={function(e){
                 if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
                 setTimeout(function(){ e.target.value=""; }, 200);
-              }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
-            </label>
+              }} style={{fontSize:14,width:"100%",color:C.text}}/>
+            </div>
           </div>
 
           {fotos.length > 0 && (
