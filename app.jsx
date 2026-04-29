@@ -1136,41 +1136,27 @@ function App() {
 
   // ── RATEIO MENSALISTAS — BASEADO EM LANÇAMENTOS MANUAIS ──
   // Cada pagamento de mensalista (tipo "funcionario") é rateado igualmente
-  // entre as obras EM ANDAMENTO que já tinham atividade no mês do lançamento.
-  // Isso evita que uma obra iniciada em abril receba rateio de janeiro.
+  // entre as obras EM ANDAMENTO que já existiam no mês do lançamento.
+  // Usa dataInicio da obra: se o mês do lançamento é anterior à dataInicio, a obra NÃO recebe rateio.
   const totalSalariosMensal = mensalistas.reduce((s,m)=>s+(m.salario||0),0);
   const lancsFuncionario = lancs.filter(l => l.tipo === "funcionario");
 
-  // Detectar em quais meses cada obra teve atividade (lançamentos diretos ou diárias)
-  const obraAtividadeMeses = {};
-  obras.forEach(o => {
-    const mesesObra = new Set();
-    // lançamentos diretos da obra
-    lancs.filter(l => l.obraId === o.id && l.tipo === "obra").forEach(l => {
-      if (l.data) mesesObra.add(l.data.slice(0,7));
-    });
-    // diárias na obra
-    diariasList.filter(d => d.obraId === o.id).forEach(d => {
-      if (d.data) mesesObra.add(d.data.slice(0,7));
-    });
-    obraAtividadeMeses[o.id] = mesesObra;
-  });
-
   // Para cada lançamento de funcionário, identificar obras ativas naquele mês
-  // e calcular quanto cada obra recebe de rateio
   const rateioMensalistaObra = {};
   obras.forEach(o => { rateioMensalistaObra[o.id] = 0; });
 
   lancsFuncionario.forEach(l => {
-    const mesLanc = l.data?.slice(0,7);
+    const mesLanc = l.data ? l.data.slice(0,7) : null;
     if (!mesLanc) return;
-    // Obras em andamento que tinham atividade naquele mês
-    const obrasDoMes = obrasAtivas.filter(o => obraAtividadeMeses[o.id]?.has(mesLanc));
-    // Se nenhuma obra ativa no mês, distribuir entre todas ativas (fallback)
-    const alvos = obrasDoMes.length > 0 ? obrasDoMes : obrasAtivas;
-    if (alvos.length === 0) return;
-    const parcela = (l.valor || 0) / alvos.length;
-    alvos.forEach(o => { rateioMensalistaObra[o.id] = (rateioMensalistaObra[o.id]||0) + parcela; });
+    // Obras em andamento que já existiam naquele mês (dataInicio <= mês do lançamento)
+    const obrasDoMes = obrasAtivas.filter(function(o) {
+      if (!o.dataInicio) return true; // sem data de início = sempre recebe
+      var mesInicio = o.dataInicio.slice(0,7);
+      return mesLanc >= mesInicio; // só recebe se o mês do lançamento >= mês de início
+    });
+    if (obrasDoMes.length === 0) return;
+    var parcela = (l.valor || 0) / obrasDoMes.length;
+    obrasDoMes.forEach(function(o) { rateioMensalistaObra[o.id] = (rateioMensalistaObra[o.id]||0) + parcela; });
   });
 
   const rateioPorObra = obrasAtivas.length > 0 ? totalSalariosMensal / obrasAtivas.length : 0;
@@ -1662,8 +1648,9 @@ function App() {
       aliquota: (initial.aliquota||0) * 100,
       rt: (initial.rt||0) * 100,
       status: initial.status,
-      execucaoManual: initial.execucaoManual || 0
-    } : { nome:"", contrato:"", aliquota:0, rt:0, status:"Em andamento", execucaoManual:0 });
+      execucaoManual: initial.execucaoManual || 0,
+      dataInicio: initial.dataInicio || ""
+    } : { nome:"", contrato:"", aliquota:0, rt:0, status:"Em andamento", execucaoManual:0, dataInicio:new Date().toISOString().slice(0,10) });
     const doSave = () => {
       if (!f.nome || !f.contrato) return;
       const d = {
@@ -1672,7 +1659,8 @@ function App() {
         aliquota: (parseFloat(f.aliquota)||0)/100,
         rt: (parseFloat(f.rt)||0)/100,
         status: f.status,
-        execucaoManual: parseFloat(f.execucaoManual) || 0
+        execucaoManual: parseFloat(f.execucaoManual) || 0,
+        dataInicio: f.dataInicio || ""
       };
       if (initial) fbEditObra(initial.id, d);
       else fbAddObra(d);
@@ -1683,7 +1671,7 @@ function App() {
         <Field label="Nome">
           <input value={f.nome} onChange={e=>setF(p=>({...p,nome:e.target.value}))} style={inputStyle}/>
         </Field>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
           <Field label="Contrato (R$)">
             <input type="number" value={f.contrato} onChange={e=>setF(p=>({...p,contrato:e.target.value}))} style={inputStyle}/>
           </Field>
@@ -1691,6 +1679,9 @@ function App() {
             <select value={f.status} onChange={e=>setF(p=>({...p,status:e.target.value}))} style={selectStyle}>
               {STATUS_OPTS.map(s=><option key={s}>{s}</option>)}
             </select>
+          </Field>
+          <Field label="Data de Início" hint="Rateio de mensalistas começa a partir deste mês">
+            <input type="date" value={f.dataInicio} onChange={e=>setF(p=>({...p,dataInicio:e.target.value}))} style={inputStyle}/>
           </Field>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
@@ -1701,7 +1692,7 @@ function App() {
             <input type="number" step="0.01" value={f.rt} onChange={e=>setF(p=>({...p,rt:e.target.value}))} style={inputStyle}/>
           </Field>
         </div>
-        <Field label={`Execução Física (${f.execucaoManual}%)`} hint="Progresso real da obra — arraste o slider ou digite o valor">
+        <Field label={"Execução Física ("+f.execucaoManual+"%)"} hint="Progresso real da obra">
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <input type="range" min="0" max="100" step="1" value={f.execucaoManual} onChange={e=>setF(p=>({...p,execucaoManual:e.target.value}))} style={{flex:1,accentColor:C.gold}}/>
             <input type="number" min="0" max="100" value={f.execucaoManual} onChange={e=>setF(p=>({...p,execucaoManual:e.target.value}))} style={{...inputStyle,width:70,textAlign:"center",padding:"8px"}}/>
@@ -2748,12 +2739,14 @@ function App() {
         const dias = diariasList.filter(d=>d.equipeId===st.id && d.obraId===o.id && d.data?.startsWith(eqFiltroMes)).length;
         return s + dias * (st.valorDiaria||0);
       }, 0);
-      // rateio mensalista do mês: lançamentos de funcionários daquele mês, rateados pelas obras ativas com atividade
-      const lancsDoMes = lancsFuncionario.filter(l => l.data?.startsWith(eqFiltroMes));
-      const totalMesFunc = lancsDoMes.reduce((s,l)=>s+(l.valor||0),0);
-      const obrasComAtivNoMes = obrasAtivas.filter(ob => obraAtividadeMeses[ob.id]?.has(eqFiltroMes));
-      const alvos = obrasComAtivNoMes.length > 0 ? obrasComAtivNoMes : obrasAtivas;
-      const rateio = alvos.find(ob => ob.id === o.id) ? totalMesFunc / alvos.length : 0;
+      // rateio mensalista do mês: usa dataInicio da obra
+      const lancsDoMes = lancsFuncionario.filter(function(l){return l.data && l.data.startsWith(eqFiltroMes)});
+      const totalMesFunc = lancsDoMes.reduce(function(s,l){return s+(l.valor||0)},0);
+      const obrasDoMesFiltro = obrasAtivas.filter(function(ob){
+        if(!ob.dataInicio) return true;
+        return eqFiltroMes >= ob.dataInicio.slice(0,7);
+      });
+      const rateio = obrasDoMesFiltro.find(function(ob){return ob.id===o.id}) ? (obrasDoMesFiltro.length>0 ? totalMesFunc/obrasDoMesFiltro.length : 0) : 0;
       return { ...o, custoDiaristas, rateio, totalMes: custoDiaristas + rateio };
     });
 
@@ -2782,6 +2775,7 @@ function App() {
           {[
             {id:"visao",label:"👥 Equipe"},
             {id:"integracao",label:"🔗 Integração com Obras"},
+            {id:"historico_rateio",label:"📊 Histórico Rateios"},
             {id:"diarias",label:"📅 Diárias"}
           ].map(t=>(
             <button key={t.id} onClick={()=>setEqTab(t.id)} style={{
@@ -2911,7 +2905,7 @@ function App() {
           <div>
             <div style={{background:C.purple+"0c",borderRadius:14,border:`1px solid ${C.purple}33`,padding:"14px 20px",marginBottom:16}}>
               <p style={{fontSize:12,fontWeight:700,color:C.purple,marginBottom:6}}>💡 Como funciona o rateio de mensalistas</p>
-              <p style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>Os pagamentos de mensalistas são lançados manualmente na aba Funcionários. Cada lançamento é rateado igualmente entre as obras em andamento que tiveram atividade no mês correspondente. Assim, uma obra que iniciou em abril não recebe rateio de janeiro. Custos operacionais sem obra alocada também são rateados igualmente.</p>
+              <p style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>Os pagamentos de mensalistas são lançados manualmente (aba Visão → Confirmar Pagamento). Cada lançamento é rateado igualmente entre as obras em andamento cuja data de início é igual ou anterior ao mês do pagamento. Exemplo: uma obra com início em abril não recebe rateio de janeiro/fevereiro/março. Verifique a aba "Histórico Rateios" para ver todos os lançamentos e identificar possíveis duplicatas.</p>
             </div>
 
             <div style={{background:C.surface,borderRadius:16,border:`1px solid ${C.border}`,padding:"20px 24px",marginBottom:16}}>
@@ -2955,6 +2949,83 @@ function App() {
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+
+        {/* TAB HISTÓRICO RATEIOS */}
+        {eqTab === "historico_rateio" && (
+          <div>
+            {(function(){
+              // Agrupar lançamentos de funcionários por mês
+              var mesesLanc = {};
+              lancsFuncionario.forEach(function(l){
+                var m = l.data ? l.data.slice(0,7) : "sem-data";
+                if(!mesesLanc[m]) mesesLanc[m] = [];
+                mesesLanc[m].push(l);
+              });
+              var mesesOrdenados = Object.keys(mesesLanc).sort().reverse();
+
+              // Detectar duplicatas: meses com mais lançamentos do que mensalistas
+              var duplicatas = {};
+              mesesOrdenados.forEach(function(m){
+                if(mesesLanc[m].length > mensalistas.length) duplicatas[m] = true;
+              });
+
+              return React.createElement("div",{style:{display:"grid",gap:16}},
+                // Alerta de duplicatas
+                Object.keys(duplicatas).length > 0 && React.createElement("div",{style:{background:C.red+"10",borderRadius:14,border:"1px solid "+C.red+"33",padding:"14px 20px"}},
+                  React.createElement("p",{style:{fontSize:13,fontWeight:800,color:C.red}},"⚠️ Meses com lançamentos duplicados: "+Object.keys(duplicatas).join(", ")),
+                  React.createElement("p",{style:{fontSize:11,color:C.textMuted,marginTop:4}},"Existem mais lançamentos do que mensalistas. Revise e exclua os duplicados.")
+                ),
+                // Tabela por mês
+                mesesOrdenados.map(function(m){
+                  var ls2 = mesesLanc[m];
+                  var total = ls2.reduce(function(s,l){return s+(l.valor||0)},0);
+                  var obrasDoMes = obrasAtivas.filter(function(o){if(!o.dataInicio) return true; return m >= o.dataInicio.slice(0,7);});
+                  var label = m.replace("-","/");
+                  return React.createElement("div",{key:m,style:{background:C.surface,borderRadius:16,border:"1px solid "+(duplicatas[m]?C.red+"66":C.border),padding:"20px 24px"}},
+                    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}},
+                      React.createElement("div",null,
+                        React.createElement("p",{style:{fontSize:16,fontWeight:800}},label),
+                        React.createElement("p",{style:{fontSize:11,color:C.textMuted,marginTop:2}},ls2.length+" lançamentos · rateado em "+obrasDoMes.length+" obras"),
+                        duplicatas[m] && React.createElement("p",{style:{fontSize:11,color:C.red,fontWeight:700,marginTop:2}},"⚠️ POSSÍVEL DUPLICATA")
+                      ),
+                      React.createElement("p",{style:{fontSize:18,fontWeight:800,color:C.gold,fontFamily:"'JetBrains Mono',monospace"}},R$(total))
+                    ),
+                    React.createElement("div",{style:{overflowX:"auto"}},
+                      React.createElement("table",{style:{width:"100%",borderCollapse:"collapse"}},
+                        React.createElement("thead",null,
+                          React.createElement("tr",null,
+                            React.createElement(TH,null,"Funcionário"),
+                            React.createElement(TH,{align:"right"},"Valor"),
+                            React.createElement(TH,null,"Data"),
+                            React.createElement(TH,null,"Obs"),
+                            isAdmin && React.createElement(TH,null,"")
+                          )
+                        ),
+                        React.createElement("tbody",null,
+                          ls2.map(function(l){
+                            return React.createElement("tr",{key:l.id},
+                              React.createElement(TD,{bold:true},l.descricao),
+                              React.createElement(TD,{mono:true,bold:true,align:"right"},R$(l.valor)),
+                              React.createElement(TD,null,fmtD(l.data)),
+                              React.createElement(TD,{color:C.textDim},l.obs||"—"),
+                              isAdmin && React.createElement(TD,null,
+                                React.createElement("div",{style:{display:"flex",gap:4}},
+                                  React.createElement("button",{onClick:function(){setModal({type:"lancEdit",lanc:l,tipo:"funcionario"})},style:{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:14}},"✏️"),
+                                  React.createElement("button",{onClick:function(){if(window.confirm("Excluir este lançamento?"))fbDelLanc(l.id)},style:{background:"none",border:"none",cursor:"pointer",color:C.red,fontSize:14}},"🗑️")
+                                )
+                              )
+                            );
+                          })
+                        )
+                      )
+                    )
+                  );
+                })
+              );
+            })()}
           </div>
         )}
 
