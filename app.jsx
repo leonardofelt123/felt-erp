@@ -1991,20 +1991,22 @@ function App() {
     const [saving,setSaving] = useState(false);
 
     const handleFiles = function(files) {
-      if(!files || !files.length) { console.log("Nenhum arquivo selecionado"); return; }
-      console.log("Fotos selecionadas:", files.length);
+      if(!files || !files.length) return;
       var newFotos = [];
       for(var i=0; i<files.length; i++) {
+        var file = files[i];
+        // Aceitar qualquer arquivo de imagem, incluindo webp do WhatsApp
+        if(file.type && file.type.indexOf("image") === -1 && file.type !== "" && file.type !== "application/octet-stream") continue;
         newFotos.push({
-          file: files[i],
-          preview: URL.createObjectURL(files[i]),
+          file: file,
+          preview: URL.createObjectURL(file),
           uploading: false,
           url: null,
           error: null,
-          name: files[i].name
+          name: file.name || ("foto-"+Date.now()+"-"+i+".jpg")
         });
       }
-      setFotos(function(prev){ return prev.concat(newFotos); });
+      if(newFotos.length > 0) setFotos(function(prev){ return prev.concat(newFotos); });
     };
 
     const removeFoto = i => {
@@ -2039,13 +2041,17 @@ function App() {
         if (foto.url) { results.push(foto.url); continue; }
         setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:true} : p));
         try {
-          const ext = foto.file.name.split(".").pop() || "jpg";
+          var fileName = foto.file.name || "foto.jpg";
+          var ext = fileName.split(".").pop();
+          if(!ext || ext === fileName || ext.length > 5) ext = "jpg";
+          var contentType = foto.file.type || "image/jpeg";
           var path = "fotos-obras/" + obraNome + "/" + f.data + "/foto-" + i + "-" + Date.now() + "." + ext;
           const storageRef = sRef(storage, path);
-          await uploadBytes(storageRef, foto.file);
+          var metadata = {contentType: contentType};
+          await uploadBytes(storageRef, foto.file, metadata);
           const url = await getDownloadURL(storageRef);
           results.push(url);
-          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url} : p));
+          setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,url:url} : p));
         } catch(err) {
           console.error("Upload falhou:", err);
           setFotos(prev => prev.map((p,j) => j===i ? {...p,uploading:false,error:"Falha"} : p));
@@ -2104,7 +2110,7 @@ function App() {
               borderColor:C.gold+"44",color:C.gold,fontSize:13,cursor:"pointer",textAlign:"center"
             }}>
               📸 Selecionar fotos
-              <input type="file" accept="image/*" multiple onChange={function(e){
+              <input type="file" accept="image/*,.webp,.heic,.heif,.jpg,.jpeg,.png" multiple onChange={function(e){
                 if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
                 setTimeout(function(){ e.target.value=""; }, 200);
               }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
@@ -2114,7 +2120,7 @@ function App() {
               borderColor:C.cyan+"44",color:C.cyan,fontSize:13,cursor:"pointer"
             }}>
               📷 Tirar foto
-              <input type="file" accept="image/*" capture="environment" onChange={function(e){
+              <input type="file" accept="image/*,.webp,.heic,.heif,.jpg,.jpeg,.png" capture="environment" onChange={function(e){
                 if(e.target.files && e.target.files.length > 0) handleFiles(e.target.files);
                 setTimeout(function(){ e.target.value=""; }, 200);
               }} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
@@ -2244,7 +2250,7 @@ function App() {
         <Field label={"Fotos ("+( fotosExistentes.length - fotosRemovidas.length + novasFotos.length )+")"}>
           <label style={{...btnGhost,marginBottom:10,borderColor:C.gold+"44",color:C.gold,cursor:"pointer",display:"inline-flex"}}>
             📸 Adicionar mais fotos
-            <input type="file" accept="image/*" multiple onChange={function(e){if(e.target.files&&e.target.files.length>0)handleNewFiles(e.target.files);setTimeout(function(){e.target.value=""},200)}} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
+            <input type="file" accept="image/*,.webp,.heic,.heif,.jpg,.jpeg,.png" multiple onChange={function(e){if(e.target.files&&e.target.files.length>0)handleNewFiles(e.target.files);setTimeout(function(){e.target.value=""},200)}} style={{position:"absolute",width:0,height:0,opacity:0,pointerEvents:"none"}}/>
           </label>
 
           {(fotosExistentes.length > 0 || novasFotos.length > 0) && (
