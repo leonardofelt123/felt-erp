@@ -1991,16 +1991,21 @@ function App() {
     const [saving,setSaving] = useState(false);
     const fileInputRef = useRef(null);
 
-    const handleFiles = (files) => {
-      const newFotos = Array.from(files).map(file => ({
-        file,
-        preview: URL.createObjectURL(file),
-        uploading: false,
-        url: null,
-        error: null,
-        name: file.name
-      }));
-      setFotos(prev => [...prev, ...newFotos]);
+    const handleFiles = function(files) {
+      if(!files || !files.length) { console.log("Nenhum arquivo selecionado"); return; }
+      console.log("Fotos selecionadas:", files.length);
+      var newFotos = [];
+      for(var i=0; i<files.length; i++) {
+        newFotos.push({
+          file: files[i],
+          preview: URL.createObjectURL(files[i]),
+          uploading: false,
+          url: null,
+          error: null,
+          name: files[i].name
+        });
+      }
+      setFotos(function(prev){ return prev.concat(newFotos); });
     };
 
     const removeFoto = i => {
@@ -2052,14 +2057,17 @@ function App() {
     };
 
     const doSave = async () => {
-      if(!f.obraId||!f.atividades) return;
+      if(!f.obraId||!f.atividades) { showToast("Preencha obra e atividades"); return; }
       setSaving(true);
+      console.log("Salvando RDO com", fotos.length, "fotos. Storage:", storage?"ativo":"inativo");
       try {
         const urls = fotos.length > 0 ? await uploadAllFotos() : [];
+        console.log("URLs obtidas:", urls.length);
         fbAddRdo({...f, fotos: urls});
         onClose();
       } catch(err) {
-        console.error(err);
+        console.error("Erro ao salvar RDO:", err);
+        showToast("Erro: " + (err.message || "falha no upload"));
         setSaving(false);
       }
     };
@@ -2090,24 +2098,34 @@ function App() {
         </Field>
 
         {/* UPLOAD DE FOTOS — direto da galeria */}
-        <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Toque para selecionar fotos. Pode selecionar várias de uma vez ou adicionar mais depois.">
+        <Field label={"Fotos do dia ("+fotos.length+" selecionadas)"} hint="Toque para selecionar fotos. Pode tocar várias vezes para adicionar mais.">
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/*"
+            accept="image/*"
             multiple
-            onChange={function(e){handleFiles(e.target.files);e.target.value="";}}
-            style={{display:"none"}}
+            onChange={function(e){
+              console.log("onChange disparado, files:", e.target.files ? e.target.files.length : 0);
+              if(e.target.files && e.target.files.length > 0) {
+                handleFiles(e.target.files);
+              }
+              setTimeout(function(){ if(e.target) e.target.value=""; }, 100);
+            }}
+            style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",zIndex:-1}}
           />
           <div style={{display:"flex",gap:8,marginBottom:10}}>
-            <button type="button" onClick={function(){fileInputRef.current&&fileInputRef.current.click()}} style={{
+            <button type="button" onClick={function(e){
+              e.preventDefault();
+              if(fileInputRef.current) fileInputRef.current.click();
+            }} style={{
               ...btnGhost,flex:1,justifyContent:"center",padding:"14px 0",
               borderColor:C.gold+"44",color:C.gold,fontSize:13
             }}>📸 Selecionar fotos</button>
-            <button type="button" onClick={function(){
+            <button type="button" onClick={function(e){
+              e.preventDefault();
               var inp = document.createElement("input");
               inp.type="file"; inp.accept="image/*"; inp.capture="environment";
-              inp.onchange=function(e){handleFiles(e.target.files)};
+              inp.onchange=function(ev){if(ev.target.files)handleFiles(ev.target.files)};
               inp.click();
             }} style={{
               ...btnGhost,justifyContent:"center",padding:"14px 16px",
@@ -2237,7 +2255,7 @@ function App() {
         </Field>
 
         <Field label={"Fotos ("+( fotosExistentes.length - fotosRemovidas.length + novasFotos.length )+")"}>
-          <input ref={editFileRef} type="file" accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/*" multiple onChange={function(e){handleNewFiles(e.target.files);e.target.value=""}} style={{display:"none"}}/>
+          <input ref={editFileRef} type="file" accept="image/*" multiple onChange={function(e){if(e.target.files&&e.target.files.length>0)handleNewFiles(e.target.files);setTimeout(function(){if(e.target)e.target.value=""},100)}} style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",zIndex:-1}}/>
           <button type="button" onClick={function(){editFileRef.current&&editFileRef.current.click()}} style={{...btnGhost,marginBottom:10,borderColor:C.gold+"44",color:C.gold}}>📸 Adicionar mais fotos</button>
 
           {(fotosExistentes.length > 0 || novasFotos.length > 0) && (
