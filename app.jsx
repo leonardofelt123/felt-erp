@@ -3960,8 +3960,8 @@ function App() {
               h+="table{width:100%;border-collapse:collapse}td,th{padding:6px 10px;border:1px solid #ccc;font-size:11px;vertical-align:top}";
               h+="th{background:#f5f5f5;font-weight:700;text-align:left}";
               h+=".sh{background:#f0f0f0;font-weight:700;padding:6px 10px;border:1px solid #ccc;font-size:11px}";
-              h+=".fg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc}";
-              h+=".fc{border:1px solid #ccc;padding:4px;text-align:center}.fc img{width:100%;max-height:320px;object-fit:cover}";
+              h+=".fg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;page-break-inside:avoid;break-inside:avoid}";
+              h+=".fc{border:1px solid #ccc;padding:4px;text-align:center;page-break-inside:avoid;break-inside:avoid;overflow:hidden}.fc img{width:100%;max-height:260px;object-fit:cover;display:block}";
               h+=".as{display:flex;justify-content:space-between;margin-top:60px}.as div{text-align:center;width:45%}";
               h+=".al{border-top:1px solid #000;padding-top:4px;font-size:11px;margin-top:40px}";
               h+="@page{margin:15mm 12mm}@media print{body{padding:0}}";
