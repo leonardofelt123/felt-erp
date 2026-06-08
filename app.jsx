@@ -1990,53 +1990,56 @@ function App() {
     const [fotos,setFotos] = useState([]); // {file,preview,uploading,url,error}
     const [saving,setSaving] = useState(false);
 
-    const convertToJpeg = function(file) {
-      return new Promise(function(resolve) {
-        var img = new Image();
-        img.onload = function() {
-          var canvas = document.createElement("canvas");
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          var ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0);
-          canvas.toBlob(function(blob) {
-            if(blob) {
-              var converted = new File([blob], (file.name||"foto").replace(/\.[^.]+$/,"")+".jpg", {type:"image/jpeg"});
-              resolve(converted);
-            } else {
-              resolve(file);
-            }
-          }, "image/jpeg", 0.85);
-        };
-        img.onerror = function() { resolve(file); };
-        img.src = URL.createObjectURL(file);
-      });
-    };
-
+    // FIX iOS SAFARI: processa uma foto por vez (sequencial) e comprime antes
+    // de criar o preview — evita estouro de memória que crashava a aba.
+    // Fotos do iPhone chegam com 4–8MB; após compressão ficam ~150–250KB.
     const handleFiles = async function(files) {
       if(!files || !files.length) return;
-      var newFotos = [];
       for(var i=0; i<files.length; i++) {
         var file = files[i];
-        var needsConvert = false;
-        var fName = (file.name||"").toLowerCase();
-        var fType = (file.type||"").toLowerCase();
-        if(fType.indexOf("webp") !== -1 || fName.endsWith(".webp")) needsConvert = true;
-        if(fType.indexOf("heic") !== -1 || fType.indexOf("heif") !== -1 || fName.endsWith(".heic") || fName.endsWith(".heif")) needsConvert = true;
-        if(fType === "" || fType === "application/octet-stream") needsConvert = true;
-
-        var finalFile = needsConvert ? await convertToJpeg(file) : file;
-
-        newFotos.push({
-          file: finalFile,
-          preview: URL.createObjectURL(finalFile),
-          uploading: false,
-          url: null,
-          error: null,
-          name: finalFile.name || ("foto-"+Date.now()+"-"+i+".jpg")
-        });
+        try {
+          var compressed = await new Promise(function(resolve) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+              var img = new Image();
+              img.onload = function() {
+                var canvas = document.createElement("canvas");
+                var MAX = 1200;
+                var scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+                canvas.width = Math.round(img.naturalWidth * scale);
+                canvas.height = Math.round(img.naturalHeight * scale);
+                var ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob(function(blob) {
+                  if(blob) {
+                    var out = new File([blob], "foto-" + Date.now() + "-" + i + ".jpg", {type:"image/jpeg"});
+                    resolve(out);
+                  } else {
+                    resolve(file);
+                  }
+                }, "image/jpeg", 0.78);
+              };
+              img.onerror = function() { resolve(file); };
+              img.src = e.target.result;
+            };
+            reader.onerror = function() { resolve(file); };
+            reader.readAsDataURL(file);
+          });
+          var preview = URL.createObjectURL(compressed);
+          setFotos(function(prev) {
+            return prev.concat([{
+              file: compressed,
+              preview: preview,
+              uploading: false,
+              url: null,
+              error: null,
+              name: compressed.name
+            }]);
+          });
+        } catch(err) {
+          console.error("Erro ao processar foto " + i, err);
+        }
       }
-      if(newFotos.length > 0) setFotos(function(prev){ return prev.concat(newFotos); });
     };
 
     const removeFoto = i => {
